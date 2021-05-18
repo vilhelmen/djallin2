@@ -6,6 +6,9 @@
 	- client id r50bzaj62mdvoo3nojyfuqeewxlj23
 	- https://id.twitch.tv/oauth2/authorize?response_type=token&client_id=r50bzaj62mdvoo3nojyfuqeewxlj23&redirect_uri=http://localhost:42069&scope=channel:read:redemptions+chat:read
 		- research state value, something about replay attacks? 'state=tQlBKW4OEJSn3SQ'
+	- Ok that can't be refreshed, we need to do oauth code flow
+		- https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=r50bzaj62mdvoo3nojyfuqeewxlj23&redirect_uri=http://localhost:42069&scope=channel:read:redemptions+chat:read
+		- POST https://id.twitch.tv/oauth2/token?client_id=r50bzaj62mdvoo3nojyfuqeewxlj23&
 	- Oh yeah this also is a user access token
 	- chat:read+channel:read:redemptions???? I think redepmtions are fed into the chat stream, so channel could be skipped
 	- local webserver to capture token? Check if auth needs to be redone. Token renewals? why is vmware running at https://localhost
