@@ -14,6 +14,35 @@ sock_context = ssl.create_default_context()
 
 logging.basicConfig(level=logging.DEBUG)
 
+receiver_html = """
+<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(233, 233, 45); color: white;"><div>
+    <p style="font-size: 256px;">:|</p>
+    <form id="token_form" method="POST" action="/">
+        <input type="text" id="token_string" name="token_string">
+    </form>
+    <script>
+    window.onload = function(){
+        document.forms.token_form.elements.token_string.value = document.location.hash;
+        document.forms.token_form.submit();
+    };
+    </script>
+</div></body></html>
+""".encode('utf-8')
+
+accepted_html = """
+<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(89, 174, 88); color: white;"><div>
+    <p style="font-size: 256px;">;)</p>
+    <script>setTimeout("window.close()",3000)</script>
+</div></body></html>
+""".encode('utf-8')
+
+rejected_html = """
+<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(217, 33, 4); color: white;"><div>
+    <p style="font-size: 256px;">:(</p>
+    <script>setTimeout("window.close()",3000)</script>
+</div></body></html>
+""".encode('utf-8')
+
 
 class ProtectedString(str):
     def __str__(self):
@@ -35,19 +64,23 @@ class TokenReceiver(BaseHTTPRequestHandler):
             self.handle_one_request()
         return self._token_data
 
-    def _set_headers(self):
-        self.send_response(200)
+    def _set_headers(self, code=200):
+        self.send_response(code)
         self.send_header("Content-type", "text/html")
         self.end_headers()
 
     def do_GET(self):
-        # TODO: test this is the http request/url/whatever
-        print(self.requestline)
         self._set_headers()
-        self.wfile.write("""<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(89, 174, 88); color: white;"><div><script>setTimeout("window.close()",3000)</script><p style="font-size: 256px;">;)</p></body></html>""".encode('utf-8'))
+        self.wfile.write(receiver_html)
 
     def do_HEAD(self):
         self._set_headers()
+
+    def do_POST(self):
+        print(self.rfile.read(int(self.headers['Content-Length'])))
+        self._set_headers()
+        self.wfile.write(accepted_html)
+        pass
 
 
 def validate_token(oauth_token):
@@ -120,16 +153,14 @@ def launch_config():
         logging.info('Booting HTTP server and requesting a new token')
         # Print URL as well!!
         try:
-            httpd = HTTPServer(('localhost', 42069), TokenReceiver)
-
-        webbrowser.open('', new=2, autoraise=True)
-
+            token = HTTPServer(('localhost', 42069), TokenReceiver).serve_forever()
+        except Exception as err:
+            pass
+        #webbrowser.open('', new=2, autoraise=True)
     # There's not a great way to do this. We gotta ping twitch to check expiration/validity
     # But we may want to pull a new token, or have to if we don't have one
     # which we then need to ping twitch for.
     # So we need to (maybe) ping twitch, (maybe) reauth, and then (maybe) ping twitch again
-
-
     return config
 
 
