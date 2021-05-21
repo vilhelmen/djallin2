@@ -7,6 +7,7 @@ import webbrowser
 import logging
 import argparse
 import toml
+from urllib.parse import parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -17,12 +18,12 @@ logging.basicConfig(level=logging.DEBUG)
 receiver_html = """
 <html><body style="margin-left: 30%; margin-top: 10%; background: rgb(233, 233, 45); color: white;"><div>
     <p style="font-size: 256px;">:|</p>
-    <form id="token_form" method="POST" action="/">
+    <form id="token_form" hidden method="POST" action="/">
         <input type="text" id="token_string" name="token_string">
     </form>
     <script>
     window.onload = function(){
-        document.forms.token_form.elements.token_string.value = document.location.hash;
+        document.forms.token_form.elements.token_string.value = document.location.hash.slice(1);
         document.forms.token_form.submit();
     };
     </script>
@@ -57,9 +58,11 @@ class ProtectedString(str):
 class TokenReceiver(BaseHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         self._token_data = None
+        self._expected_state = None
         super().__init__(*args, **kwargs)
 
-    def serve_forever(self):
+    def serve_forever(self, expected_state):
+        self._expected_state = expected_state
         while not self._token_data:
             self.handle_one_request()
         return self._token_data
@@ -77,10 +80,24 @@ class TokenReceiver(BaseHTTPRequestHandler):
         self._set_headers()
 
     def do_POST(self):
-        print(self.rfile.read(int(self.headers['Content-Length'])))
+        # Hoo and do I mean TRY
+        try:
+            logging.info('Received response from browser')
+            form_resp = self.rfile.read(int(self.headers['Content-Length'], 0)).decode('utf-8')
+            parsed_token = parse_qs(parse_qs(form_resp)['token_string'][0])['access_token']
+        except Exception as err:
+            self._token_data = err
+        else:
+            try:
+                logging.info('Validating new token')
+                validation_data = validate_token(parsed_token)
+                if validation_data is None:
+                    raise RuntimeError(f'Error running new token validation: {err}')
+            except Exception as err:
+                pass
+            self._token_data = parsed_token
         self._set_headers()
-        self.wfile.write(accepted_html)
-        pass
+        self.wfile.write(rejected_html)
 
 
 def validate_token(oauth_token):
@@ -153,6 +170,7 @@ def launch_config():
         logging.info('Booting HTTP server and requesting a new token')
         # Print URL as well!!
         try:
+            # TODO: launch this in a thread, also we need a state token
             token = HTTPServer(('localhost', 42069), TokenReceiver).serve_forever()
         except Exception as err:
             pass
