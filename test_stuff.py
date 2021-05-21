@@ -7,6 +7,7 @@ import webbrowser
 import logging
 import argparse
 import toml
+import threading
 from urllib.parse import parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -94,10 +95,15 @@ class TokenReceiver(BaseHTTPRequestHandler):
                 if validation_data is None:
                     raise RuntimeError(f'Error running new token validation: {err}')
             except Exception as err:
-                pass
-            self._token_data = parsed_token
+                self._token_data = err
+            else:
+                self._token_data = validation_data
+        if isinstance(self._token_data, Exception):
+            resp = rejected_html
+        else:
+            resp = accepted_html
         self._set_headers()
-        self.wfile.write(rejected_html)
+        self.wfile.write(resp)
 
 
 def validate_token(oauth_token):
@@ -170,8 +176,10 @@ def launch_config():
         logging.info('Booting HTTP server and requesting a new token')
         # Print URL as well!!
         try:
-            # TODO: launch this in a thread, also we need a state token
-            token = HTTPServer(('localhost', 42069), TokenReceiver).serve_forever()
+            # TODO: test/finish/etc
+            server = HTTPServer(('localhost', 42069), TokenReceiver)
+            http_thread = threading.Thread(target=server.serve_forever)
+
         except Exception as err:
             pass
         #webbrowser.open('', new=2, autoraise=True)
