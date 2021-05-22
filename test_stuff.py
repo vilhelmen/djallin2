@@ -5,10 +5,10 @@ import ssl
 import urllib.parse
 
 import requests
-import concurrent.futures
 import webbrowser
 import logging
 import argparse
+import numpy  # this apparently will make websocket run faster
 import secrets
 import toml
 import threading
@@ -244,11 +244,7 @@ def launch_config():
     return config, validation_response
 
 
-if __name__ == '__main__':
-    config, server_validation = launch_config()
-
-    #print(config, server_validation)
-
+def chat_listener(config, server_validation):
     creds = {
         'host': 'irc.chat.twitch.tv',
         'port': 6697,
@@ -258,20 +254,21 @@ if __name__ == '__main__':
     }
 
     # TODO: ugh. we're gonna have to put everything in a try and eugh
+    #  Good idea, every PING we decrement this by one/reset it
     retry_count = 0
 
+    # port to websocket?
+    # I don't like that the websocket library has an FAQ section for "why is it slow"
     with socket.create_connection((creds['host'], creds['port'])) as sock:
         sock.setblocking(True)  # The docs DON'T say it DOESN'T work on windows
-        # I... do you set the wrapper or...???????????
-        # ssock.setblocking(True)
         with sock_context.wrap_socket(sock, server_hostname=creds['host']) as ssock:
             ssock.send('PASS {}\r\nNICK {}\r\n'.format(creds['oauth'], creds['user']).encode('utf-8'))
             # ":tmi.twitch.tv NOTICE * :Login authentication failed" on bad oauth. idk about expired
             # We should expect a "GLHF!" otherwise in the first response
-            login_status = 'GLHF!' in ssock.recv(512).decode('utf-8').strip()
+            login_status = ssock.recv(512).decode('utf-8').strip()
             if 'GLHF!' not in login_status:
                 # FIXME: retry...?
-                #  A recv != a connection issue
+                #  A login failure != a connection issue tho
                 msg = f'Failed to login to chat: {login_status}'
                 logging.critical(msg)
                 raise RuntimeError(msg)
@@ -285,6 +282,7 @@ if __name__ == '__main__':
 
             ssock.send('JOIN {}\r\n'.format(creds['channel']).encode('utf-8'))
             join_status = ssock.recv(512).decode('utf-8').strip()
+            # FIXME: sometimes only receives the JOIN line and not the whole message
             if 'End of /NAMES list' not in join_status:
                 msg = f'Failed to join chat: {join_status}'
                 logging.critical(msg)
@@ -294,14 +292,33 @@ if __name__ == '__main__':
 
             # Every 5 minutes we get "PING :tmi.twitch.tv" to which we reply "PONG :tmi.twitch.tv"
             while True:
-                msg = ssock.recv(1024).decode('utf-8').strip()
+                msg = ssock.recv(4096).decode('utf-8').strip()
                 # max twitch message len is 512 MAYBE
                 # It's IRC in that it's mostly IRC-shaped
-                # Tags probably blast that incredibly
+                # Tags bump that significantly
                 if len(msg):
                     print('NEWMSG:', msg)
+                    # safe parsing seems tricky.
+                    # PRIVMSG's tmi string is much more complicated than the regular tmi string
+                    # splitting on space up to 5 blocks seems safe. we should only be receiving PRIVMSG and PING
+                    # @tags tmi_string privmsg #channel :msg
+                    components = msg.split(' ', maxsplit=5)
+
+
+                    # @badge-info=;badges=broadcaster/1;client-nonce=f3de52b8dc6637fd0f5647f1d5361071;color=#CC7A00;display-name=Vilhel;emotes=;flags=;id=5375de26-03b9-4cfe-938f-bf66f4be6975;mod=0;room-id=64773936;subscriber=0;tmi-sent-ts=1621712675892;turbo=0;user-id=64773936;user-type= :vilhel!vilhel@vilhel.tmi.twitch.tv PRIVMSG #vilhel :frick
+                    # @badge-info=;badges=broadcaster/1;client-nonce=f7ae682dbb4de8b90f49fff50f6e156b;color=#CC7A00;display-name=Vilhel;emote-only=1;emotes=305515259:0-12,29-41/307623259:14-27,43-56;flags=;id=28e1f58f-22d7-4688-872d-6f66974fa963;mod=0;room-id=64773936;subscriber=0;tmi-sent-ts=1621712712078;turbo=0;user-id=64773936;user-type= :vilhel!vilhel@vilhel.tmi.twitch.tv PRIVMSG #vilhel :mdcchrMuncher mdcchrYeahbaby mdcchrMuncher mdcchrYeahbaby
                     #if msg == 'PING :tmi.twitch.tv':
                 else:
                     # FIXME: idk why this happens but the login checks should prevent this now
                     print('.', end='')
+
+
+if __name__ == '__main__':
+    config, server_validation = launch_config()
+
+    #threading.Thread(target=chat_listener, name='soundq_')
+    chat_listener(config, server_validation)
+
+    #print(config, server_validation)
+
 
