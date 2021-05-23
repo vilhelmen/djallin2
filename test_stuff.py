@@ -7,6 +7,7 @@ import urllib.parse
 import requests
 import webbrowser
 import logging
+import copy
 import argparse
 import numpy  # this apparently will make websocket run faster
 import secrets
@@ -18,9 +19,10 @@ from pathlib import Path
 
 sock_context = ssl.create_default_context()
 
+# FIXME: move to argparse, etc
 logging.basicConfig(level=logging.DEBUG)
 
-receiver_html = """
+receiver_html = r"""
 <html><body style="margin-left: 30%; margin-top: 10%; background: rgb(233, 233, 45); color: white;"><div>
     <p style="font-size: 256px;">:|</p>
     <form id="token_form" hidden method="POST" action="/" enctype="application/x-www-form-urlencoded">
@@ -35,20 +37,44 @@ receiver_html = """
 </div></body></html>
 """.encode('utf-8')
 
-accepted_html = """
+accepted_html = r"""
 <html><body style="margin-left: 30%; margin-top: 10%; background: rgb(89, 174, 88); color: white;"><div>
     <p style="font-size: 256px;">;)</p>
     <script>setTimeout("window.close()",5000)</script>
 </div></body></html>
 """.encode('utf-8')
 
-rejected_html = """
+rejected_html = r"""
 <html><body style="margin-left: 30%; margin-top: 10%; background: rgb(217, 33, 4); color: white;"><div>
     <p style="font-size: 256px;">:(</p>
     <script>setTimeout("window.close()",5000)</script>
 </div></body></html>
 """.encode('utf-8')
 
+ready_msg = r"""
+ ____  _____    _    ______   __
+|  _ \| ____|  / \  |  _ \ \ / /
+| |_) |  _|   / _ \ | | | \ V / 
+|  _ <| |___ / ___ \| |_| || |  
+|_| \_\_____/_/   \_\____/ |_|                                  
+"""
+
+crash_msg = r"""
+  ____ ____      _    ____  _   _ 
+ / ___|  _ \    / \  / ___|| | | |
+| |   | |_) |  / _ \ \___ \| |_| |
+| |___|  _ <  / ___ \ ___) |  _  |
+ \____|_| \_\/_/   \_\____/|_| |_|
+"""
+
+dead_msg = r"""
+ ____  _____    _    ____         __
+|  _ \| ____|  / \  |  _ \   _   / /
+| | | |  _|   / _ \ | | | | (_) | | 
+| |_| | |___ / ___ \| |_| |  _  | | 
+|____/|_____/_/   \_\____/  (_) | | 
+                                 \_\
+"""
 
 # class ProtectedString(str):
 #     def __str__(self):
@@ -70,6 +96,9 @@ authorize_url = 'https://id.twitch.tv/oauth2/authorize?' + urllib.parse.urlencod
      'scope': 'channel:read:redemptions chat:read',
      'state': http_state}  # set force_verify to true to prompt authorization every time
 )
+
+# time.sleep is bad >:C
+sleep_event = threading.Event()
 
 
 # Looks like this is instantiated per incoming request >:C
@@ -132,9 +161,9 @@ def validate_token(oauth_token):
         resp = requests.get('https://id.twitch.tv/oauth2/validate',
                             headers={'Authorization': 'OAuth ' + oauth_token})
     except Exception as err:
-        msg = f'Error contacting Twitch, internet issues? {err}'
-        logging.critical(msg)
-        raise RuntimeError(msg) from err
+        err_msg = f'Error contacting Twitch, internet issues? {err}'
+        logging.critical(err_msg)
+        raise RuntimeError(err_msg) from err
 
     if resp.status_code == 200:
         resp = resp.json()
@@ -148,9 +177,9 @@ def validate_token(oauth_token):
     elif resp.status_code == 401:
         return None
     else:
-        msg = f'Unrecognized status code during token check: {resp.status_code}, unsure how to proceed.'
-        logging.critical(msg)
-        raise RuntimeError(msg)
+        err_msg = f'Unrecognized status code during token check: {resp.status_code}, unsure how to proceed.'
+        logging.critical(err_msg)
+        raise RuntimeError(err_msg)
 
 
 def token_registration():
@@ -178,10 +207,8 @@ def token_registration():
         logging.critical('HTTP listener is down, cannot receive token.\n'
                          'Refer to the documentation for manual authorization.\n'
                          'Closing in 10...')
-        # time.sleep is bad
         # FIXME: see if the windows bundler can leave the window open on exit
-        shutoff = threading.Event()
-        shutoff.wait(10)
+        sleep_event.wait(10)
         raise RuntimeError('Failure in HTTP listener')
 
     logging.info('Waiting for response...')
@@ -194,14 +221,43 @@ def token_registration():
         logging.critical(f'HTTP responder returned an error: {http_response}.\n'
                          'Refer to the documentation for manual authorization.\n'
                          'Closing in 10...')
-        # time.sleep is bad
-        shutoff = threading.Event()
-        shutoff.wait(10)
+        sleep_event.wait(10)
         raise RuntimeError('Failure in HTTP listener') from http_response
     return http_response
 
 
-def launch_config():
+def validate_config(user_config):
+    """
+    Check configuration shape, build listener configuration
+    :param config: config file data
+    :return: listener configuration
+    """
+
+    # First, find all the chat and point listeners. then unkink all the links
+    listener_conf = {
+        'chat': {k: v for k, v in config.get('chat',  {}).items() if 'link' not in v},
+        'points': {k: v for k, v in config.get('points',  {}).items() if 'link' not in v}
+    }
+
+    try:
+        for section in ['chat', 'points']:
+            for k, v in {k: v for k, v in config.get(section,  {}).items() if 'link' in v}:
+                source = v['link'].split('.')
+                # keys set in the linker override the linkee but I'm not gonna announce that
+                instance = listener_conf[source[0]][source[1]] | v
+                instance.pop('link', None)
+                if section == 'points':
+                    instance.pop('who', None)
+    except Exception as err:
+        logging.critical(f'Error reconstructing link for {section}.{k}: {err}')
+        raise
+
+    # TODO: more stuff
+
+    pass
+
+
+def load_config():
     """
     Load the config file, vaguely check its shape, dial in to twitch/generate token
     :return: config dict
@@ -215,6 +271,7 @@ def launch_config():
         raise
 
     # TODO: validate config shape here?
+    validate_config(copy.deepcopy(config))
 
     ready = False
     if config.get('token'):
@@ -253,68 +310,92 @@ def chat_listener(config, server_validation):
         'oauth': 'oauth:' + config['token']
     }
 
-    # TODO: ugh. we're gonna have to put everything in a try and eugh
-    #  Good idea, every PING we decrement this by one/reset it
     retry_count = 0
+    null_count = 0
+    while True:
+        try:
+            # port to websocket?
+            #  I don't like that the websocket library has an FAQ section for "why is it slow"
+            # Need to see what a network disconnect looks like
+            #  MacOS, baby. this just keeps working if you turn the network off and on
+            with socket.create_connection((creds['host'], creds['port'])) as sock:
+                sock.setblocking(True)  # The docs DON'T say it DOESN'T work on windows
+                with sock_context.wrap_socket(sock, server_hostname=creds['host']) as ssock:
+                    ssock.send('PASS {}\r\nNICK {}\r\n'.format(creds['oauth'], creds['user']).encode('utf-8'))
+                    # ":tmi.twitch.tv NOTICE * :Login authentication failed" on bad oauth. idk about expired
+                    # We should expect a "GLHF!" otherwise in the first response
+                    login_status = ssock.recv(512).decode('utf-8').strip()
+                    if 'GLHF!' not in login_status:
+                        err_str = f'Failed to login to chat: {login_status}'
+                        logging.critical(err_str)
+                        raise RuntimeError(err_str)
 
-    # port to websocket?
-    # I don't like that the websocket library has an FAQ section for "why is it slow"
-    with socket.create_connection((creds['host'], creds['port'])) as sock:
-        sock.setblocking(True)  # The docs DON'T say it DOESN'T work on windows
-        with sock_context.wrap_socket(sock, server_hostname=creds['host']) as ssock:
-            ssock.send('PASS {}\r\nNICK {}\r\n'.format(creds['oauth'], creds['user']).encode('utf-8'))
-            # ":tmi.twitch.tv NOTICE * :Login authentication failed" on bad oauth. idk about expired
-            # We should expect a "GLHF!" otherwise in the first response
-            login_status = ssock.recv(512).decode('utf-8').strip()
-            if 'GLHF!' not in login_status:
-                # FIXME: retry...?
-                #  A login failure != a connection issue tho
-                msg = f'Failed to login to chat: {login_status}'
-                logging.critical(msg)
-                raise RuntimeError(msg)
+                    ssock.send('CAP REQ :twitch.tv/tags\r\n'.encode('utf-8'))
+                    cap_add_status = ssock.recv(512).decode('utf-8').strip()
+                    if cap_add_status != ':tmi.twitch.tv CAP * ACK :twitch.tv/tags':
+                        err_str = f'Failed to activate tag cap: {cap_add_status}'
+                        logging.critical(err_str)
+                        raise RuntimeError(err_str)
 
-            ssock.send('CAP REQ :twitch.tv/tags\r\n'.encode('utf-8'))
-            cap_add_status = ssock.recv(512).decode('utf-8').strip()
-            if cap_add_status != ':tmi.twitch.tv CAP * ACK :twitch.tv/tags':
-                msg = f'Failed to activate tag cap: {cap_add_status}'
-                logging.critical(msg)
-                raise RuntimeError(msg)
+                    ssock.send('JOIN {}\r\n'.format(creds['channel']).encode('utf-8'))
+                    join_status = ssock.recv(512).decode('utf-8').strip()
+                    if '.tmi.twitch.tv JOIN #' in join_status:
+                        # Sometimes we don't get the NAMES message in time
+                        if 'End of /NAMES list' not in join_status:
+                            join_names = ssock.recv(512).decode('utf-8').strip()
+                            if 'End of /NAMES list' not in join_names:
+                                err_str = 'Names list reply missing? Got:\n{}'.format('\n'.join([join_status, join_names]))
+                                logging.critical(err_str)
+                                raise RuntimeError(err_str)
+                    else:
+                        err_str = f'Failed to join chat: {join_status}'
+                        logging.critical(err_str)
+                        raise RuntimeError(err_str)
 
-            ssock.send('JOIN {}\r\n'.format(creds['channel']).encode('utf-8'))
-            join_status = ssock.recv(512).decode('utf-8').strip()
-            # FIXME: sometimes only receives the JOIN line and not the whole message
-            if 'End of /NAMES list' not in join_status:
-                msg = f'Failed to join chat: {join_status}'
-                logging.critical(msg)
-                raise RuntimeError(msg)
-
-            logging.info('Connected to chat!')
-
-            # Every 5 minutes we get "PING :tmi.twitch.tv" to which we reply "PONG :tmi.twitch.tv"
-            while True:
-                msg = ssock.recv(4096).decode('utf-8').strip()
-                # max twitch message len is 512 MAYBE
-                # It's IRC in that it's mostly IRC-shaped
-                # Tags bump that significantly
-                if len(msg):
-                    print('NEWMSG:', msg)
-                    # safe parsing seems tricky.
-                    # PRIVMSG's tmi string is much more complicated than the regular tmi string
-                    # splitting on space up to 5 blocks seems safe. we should only be receiving PRIVMSG and PING
-                    # @tags tmi_string privmsg #channel :msg
-                    components = msg.split(' ', maxsplit=5)
-
-
-                    # @badge-info=;badges=broadcaster/1;client-nonce=f3de52b8dc6637fd0f5647f1d5361071;color=#CC7A00;display-name=Vilhel;emotes=;flags=;id=5375de26-03b9-4cfe-938f-bf66f4be6975;mod=0;room-id=64773936;subscriber=0;tmi-sent-ts=1621712675892;turbo=0;user-id=64773936;user-type= :vilhel!vilhel@vilhel.tmi.twitch.tv PRIVMSG #vilhel :frick
-                    # @badge-info=;badges=broadcaster/1;client-nonce=f7ae682dbb4de8b90f49fff50f6e156b;color=#CC7A00;display-name=Vilhel;emote-only=1;emotes=305515259:0-12,29-41/307623259:14-27,43-56;flags=;id=28e1f58f-22d7-4688-872d-6f66974fa963;mod=0;room-id=64773936;subscriber=0;tmi-sent-ts=1621712712078;turbo=0;user-id=64773936;user-type= :vilhel!vilhel@vilhel.tmi.twitch.tv PRIVMSG #vilhel :mdcchrMuncher mdcchrYeahbaby mdcchrMuncher mdcchrYeahbaby
-                    #if msg == 'PING :tmi.twitch.tv':
-                else:
-                    # FIXME: idk why this happens but the login checks should prevent this now
-                    print('.', end='')
+                    logging.info('Connected to chat!')
+                    while True:
+                        msg = ssock.recv(4096).decode('utf-8').strip()
+                        # max twitch message len is 512 MAYBE
+                        # It's IRC in that it's mostly IRC-shaped
+                        # Tags bump that significantly
+                        if len(msg):
+                            print('NEWMSG:', msg)
+                            # safe parsing seems tricky.
+                            # PRIVMSG's tmi string is much more complicated than the regular tmi string
+                            # splitting on space up to 5 blocks seems safe. we should only be receiving PRIVMSG and PING
+                            # @tags tmi_string privmsg #channel :msg
+                            # PING tmi_string
+                            components = msg.split(' ', maxsplit=5)
+                            if components[0] == 'PING':
+                                ssock.send('PONG\r\n'.encode('utf-8'))
+                                # congrats, we made it 5 minutes without dying!
+                                retry_count = 0
+                                null_count = 0
+                            elif len(components) == 5 and components[2] == 'PRIVMSG':
+                                # user message, send to routing. Echo?
+                                pass
+                            else:
+                                logging.error(f'Mystery message from twitch, probably fine: {msg}')
+                            # @badge-info=;badges=broadcaster/1;client-nonce=f3de52b8dc6637fd0f5647f1d5361071;color=#CC7A00;display-name=Vilhel;emotes=;flags=;id=5375de26-03b9-4cfe-938f-bf66f4be6975;mod=0;room-id=64773936;subscriber=0;tmi-sent-ts=1621712675892;turbo=0;user-id=64773936;user-type= :vilhel!vilhel@vilhel.tmi.twitch.tv PRIVMSG #vilhel :frick
+                            # @badge-info=;badges=broadcaster/1;client-nonce=f7ae682dbb4de8b90f49fff50f6e156b;color=#CC7A00;display-name=Vilhel;emote-only=1;emotes=305515259:0-12,29-41/307623259:14-27,43-56;flags=;id=28e1f58f-22d7-4688-872d-6f66974fa963;mod=0;room-id=64773936;subscriber=0;tmi-sent-ts=1621712712078;turbo=0;user-id=64773936;user-type= :vilhel!vilhel@vilhel.tmi.twitch.tv PRIVMSG #vilhel :mdcchrMuncher mdcchrYeahbaby mdcchrMuncher mdcchrYeahbaby
+                        else:
+                            logging.error('Received an empty message?')
+                            null_count += 1
+                            if null_count >= 5:
+                                err_msg = 'Too many empty messages!'
+                                logging.error(err_msg)
+                                raise RuntimeError(err_msg)
+        except Exception as err:
+            logging.error(crash_msg)
+            retry_count += 1
+            if retry_count >= 3:
+                logging.critical('Too many chat failures!%s', dead_msg)
+                raise
+        sleep_event.wait(retry_count*2)
 
 
 if __name__ == '__main__':
-    config, server_validation = launch_config()
+    config, server_validation = load_config()
 
     #threading.Thread(target=chat_listener, name='soundq_')
     chat_listener(config, server_validation)
