@@ -12,6 +12,7 @@ import argparse
 import numpy  # this apparently will make websocket run faster
 import secrets
 import toml
+import queue
 import threading
 from urllib.parse import parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -99,6 +100,9 @@ authorize_url = 'https://id.twitch.tv/oauth2/authorize?' + urllib.parse.urlencod
 
 # time.sleep is bad >:C
 sleep_event = threading.Event()
+
+# FIXME: queue.get() will do a blocking sleep on windows because of course it would
+sound_queue = queue.PriorityQueue()
 
 
 # Looks like this is instantiated per incoming request >:C
@@ -235,13 +239,15 @@ def validate_config(user_config):
 
     # First, find all the chat and point listeners. then unkink all the links
     listener_conf = {
-        'chat': {k: v for k, v in config.get('chat',  {}).items() if 'link' not in v},
-        'points': {k: v for k, v in config.get('points',  {}).items() if 'link' not in v}
+        'chat': {k: v for k, v in user_config.get('chat',  {}).items() if 'link' not in v},
+        'points': {k: v for k, v in user_config.get('points',  {}).items() if 'link' not in v}
     }
 
+    section = None
+    k = None
     try:
         for section in ['chat', 'points']:
-            for k, v in {k: v for k, v in config.get(section,  {}).items() if 'link' in v}:
+            for k, v in {key: value for key, value in user_config.get(section,  {}).items() if 'link' in value}.items():
                 source = v['link'].split('.')
                 # keys set in the linker override the linkee but I'm not gonna announce that
                 instance = listener_conf[source[0]][source[1]] | v
@@ -253,6 +259,8 @@ def validate_config(user_config):
         raise
 
     # TODO: more stuff
+
+    # fun idea, we could build functions but also I don't think I remember how to do that
 
     pass
 
