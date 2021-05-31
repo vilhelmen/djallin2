@@ -1,0 +1,44 @@
+token = ""
+
+# chat.NAME will define a chat listener
+# Listeners will be checked in alphabetical order, stopping at the first successful request
+# Names should be unique for their section
+# Keep the names alphanumeric
+[chat.sound]
+    # Who can run this command. Allows badge-based filters or a list of names.
+    # Delete both filters to allow all.
+    #  Badges include admin, bits, broadcaster, global_mod, moderator, subscriber, staff, turbo, "and more"
+    #   Twitch doesn't give a good list, sorry.
+    #   NOTE: you are not considered a moderator of your own channel in the badge system
+    #  Usernames will be lowercased for comparison
+    # TODO: see if a VIP badge is just vip
+    names = ["vilhel"]
+    badges = ["moderator", "broadcaster"]
+    # What will be played when triggered. Relative paths are relative to this config file.
+    #  A directory will be searched for a corresponding MP3 when triggered
+    #  A single MP3 will always be played when triggered
+    target = "./sounds/"
+    # What command triggers playback. Must be at the start of a message.
+    # You probably want a space on the end to prevent command confusion
+    #  Directory playback will sanitize the remainder of the message, append .mp3, and search for that file
+    #  Single playback will ignore the user message and play the target mp3
+    #  See below for random playback
+    command = "!sound "
+    # Random playback settings. Not compatable with single playback
+    #  1 will enable the "random" command, which will play a random sound in the target director
+    #    "random.mp3" can only be triggered by random selection if it exists
+    #  2 will ignore user input and always select a random sound in the target directory
+    #  Anything else will disable random playback
+    random = 1
+    # Priority playback means the sound will jump to the front of the playback queue
+    #  Priority sounds will be sorted by their arrival time
+    priority = false
+
+# points.NAME will define a point redemption listener
+[points.sound]
+    # Point redemtion name
+    name = "play sound"
+    # Supports all configuration a chat listener does, except for user filters
+    # Alternatively, link it to an existing listener to copy all settings
+    #  Linking to a configuration with a link probably won't work
+    link = "chat.sound"

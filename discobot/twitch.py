@@ -1,170 +1,10 @@
 #!/usr/bin/env python3
 
-# TODO: this is 3.7+ only
-import re
-import socket
-import ssl
-import urllib.parse
 
-from dataclasses import dataclass, field
-import requests
-import webbrowser
-import logging
-import copy
-import traceback
-import argparse
-import numpy  # this apparently will make websocket run faster
-import secrets
-import dateutil.parser
-import toml
-import queue
-import threading
-import typing
-from urllib.parse import parse_qs
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from pathlib import Path
 
 
 sock_context = ssl.create_default_context()
 
-# FIXME: move to argparse, etc
-logging.basicConfig(level=logging.DEBUG)
-
-receiver_html = r"""
-<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(233, 233, 45); color: white;"><div>
-    <p style="font-size: 256px;">:|</p>
-    <form id="token_form" hidden method="POST" action="/" enctype="application/x-www-form-urlencoded">
-        <input type="text" id="token_string" name="token_string">
-    </form>
-    <script>
-    window.onload = function(){
-        document.forms.token_form.elements.token_string.value = document.location.hash.slice(1);
-        document.forms.token_form.submit();
-    };
-    </script>
-</div></body></html>
-""".encode('utf-8')
-
-accepted_html = r"""
-<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(89, 174, 88); color: white;"><div>
-    <p style="font-size: 256px;">;)</p>
-    <script>setTimeout("window.close()",5000)</script>
-</div></body></html>
-""".encode('utf-8')
-
-rejected_html = r"""
-<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(217, 33, 4); color: white;"><div>
-    <p style="font-size: 256px;">:(</p>
-    <script>setTimeout("window.close()",5000)</script>
-</div></body></html>
-""".encode('utf-8')
-
-ready_msg = r"""
- ____  _____    _    ______   __
-|  _ \| ____|  / \  |  _ \ \ / /
-| |_) |  _|   / _ \ | | | \ V / 
-|  _ <| |___ / ___ \| |_| || |  
-|_| \_\_____/_/   \_\____/ |_|                                  
-"""
-
-crash_msg = r"""
-  ____ ____      _    ____  _   _ 
- / ___|  _ \    / \  / ___|| | | |
-| |   | |_) |  / _ \ \___ \| |_| |
-| |___|  _ <  / ___ \ ___) |  _  |
- \____|_| \_\/_/   \_\____/|_| |_|
-"""
-
-dead_msg = r"""
- ____  _____    _    ____         __
-|  _ \| ____|  / \  |  _ \   _   / /
-| | | |  _|   / _ \ | | | | (_) | | 
-| |_| | |___ / ___ \| |_| |  _  | | 
-|____/|_____/_/   \_\____/  (_) | | 
-                                 \_\
-"""
-
-# class ProtectedString(str):
-#     def __str__(self):
-#         return '---NO---'
-#
-#     __repr__ = __str__
-#
-#     def _orig_str(self):
-#         return str.__str__(self)
-
-
-http_responded = threading.Event()
-http_state = secrets.token_urlsafe(16)
-http_response = tuple()  # >:C globals
-authorize_url = 'https://id.twitch.tv/oauth2/authorize?' + urllib.parse.urlencode(
-    {'response_type': 'token',
-     'client_id': 'r50bzaj62mdvoo3nojyfuqeewxlj23',
-     'redirect_uri': 'http://localhost:42069',
-     'scope': 'channel:read:redemptions chat:read',
-     'state': http_state}  # set force_verify to true to prompt authorization every time
-)
-
-# time.sleep is bad >:C
-sleep_event = threading.Event()
-
-# FIXME: queue.get() will do a blocking sleep on windows because of course it would
-sound_queue = queue.PriorityQueue()
-
-
-@dataclass(order=True)
-class SoundRequest:
-    priority: int
-    timestamp: int
-    request: Path = field(compare=False)
-
-
-# Looks like this is instantiated per incoming request >:C
-# There's really not a good way to get data out of this thing.
-class TokenReceiver(BaseHTTPRequestHandler):
-    def _set_headers(self, code=200):
-        self.send_response(code)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-
-    def do_GET(self):
-        self._set_headers()
-        self.wfile.write(receiver_html)
-
-    def do_HEAD(self):
-        self._set_headers()
-
-    def do_POST(self):
-        global http_response
-        # Hoo and do I mean TRY
-        try:
-            logging.info('Received response from browser')
-            form_resp = self.rfile.read(int(self.headers['Content-Length'], 0)).decode('utf-8')
-            parsed_resp = parse_qs(parse_qs(form_resp)['token_string'][0])
-            if parsed_resp['state'][0] != http_state:
-                raise RuntimeError('Security token mismatch, something is up with our Twitch connection')
-            parsed_token = parsed_resp['access_token'][0]
-        except Exception as err:
-            http_response = err
-        else:
-            try:
-                logging.info('Validating new token')
-                validation_data = validate_token(parsed_token)
-                if validation_data is None:
-                    raise RuntimeError(f'New token validation failed :(')
-            except Exception as err:
-                http_response = err
-            else:
-                http_response = (parsed_token, validation_data)
-
-        if isinstance(http_response, Exception):
-            resp = rejected_html
-        else:
-            resp = accepted_html
-
-        self._set_headers()
-        self.wfile.write(resp)
-        http_responded.set()
 
 
 def validate_token(oauth_token):
@@ -200,53 +40,9 @@ def validate_token(oauth_token):
         raise RuntimeError(err_msg)
 
 
-def token_registration():
+def build_and_validate_conf(user_config):
     """
-    Boot an HTTP listener and contact twitch for a new token.
-    Raises on failure
-    :return: (token, validation_data)
-    """
-    logging.info('Booting HTTP server')
-    try:
-        server = HTTPServer(('localhost', 42069), TokenReceiver)
-        http_thread = threading.Thread(target=server.serve_forever, name='http_worker')
-        http_thread.start()
-    except Exception as err:
-        logging.critical(f'Error launching HTTP listener: {err}')
-        server = None
-        http_thread = None
-
-    logging.info(f'Opening browser to {authorize_url}')
-    browser_opened = webbrowser.open(authorize_url, new=2, autoraise=True)
-    if not browser_opened:
-        logging.error('Browser open failed :(')
-
-    if server is None:
-        logging.critical('HTTP listener is down, cannot receive token.\n'
-                         'Refer to the documentation for manual authorization.\n'
-                         'Closing in 10...')
-        # FIXME: see if the windows bundler can leave the window open on exit
-        sleep_event.wait(10)
-        raise RuntimeError('Failure in HTTP listener')
-
-    logging.info('Waiting for response...')
-    http_responded.wait()
-    logging.info('Listener cleanup')
-    server.shutdown()
-    http_thread.join()
-
-    if isinstance(http_response, Exception):
-        logging.critical(f'HTTP responder returned an error: {http_response}.\n'
-                         'Refer to the documentation for manual authorization.\n'
-                         'Closing in 10...')
-        sleep_event.wait(10)
-        raise RuntimeError('Failure in HTTP listener') from http_response
-    return http_response
-
-
-def validate_config(user_config):
-    """
-    Check configuration shape, build listener configuration
+    Check configuration shape, build listeners
     :param config: config file data
     :return: listener configuration
     """
@@ -405,12 +201,14 @@ def points_listener_factory(target: Path,
     return listener
 
 
+
 def load_config():
     """
     Load the config file, vaguely check its shape, dial in to twitch/generate token
     :return: config dict
     """
     # TODO: rename config file, figure out .gitignore for it
+    #  also make it an argument or something
     config_file = Path('creds.toml')
     try:
         config = toml.loads(config_file.read_text())
@@ -418,8 +216,7 @@ def load_config():
         logging.critical('Error loading configuration file: %s', err)
         raise
 
-    # TODO: validate config shape here?
-    chat_functions, points_functions = validate_config(copy.deepcopy(config))
+    chat_functions, points_functions = build_and_validate_conf(copy.deepcopy(config))
 
     ready = False
     if config.get('token'):
@@ -428,7 +225,7 @@ def load_config():
         if validation_response is None:
             logging.warning('Existing token looks bad, will need to get a new one')
         else:
-            if validation_response['expires_in'] < 60*24*5:
+            if validation_response['expires_in'] < 60*24*3:
                 logging.info('Token is expiring soon, requesting a new one')
             else:
                 ready = True
@@ -440,13 +237,37 @@ def load_config():
             config_file.write_text(toml.dumps(config))
 
     if not ready:
-        token_registration()
-        config['token'] = http_response[0]
+        oauth_url = 'https://id.twitch.tv/oauth2/authorize'
+        # set force_verify to make twitch prompt for authorization every time
+        oauth_params = {'response_type': 'token',
+                        'client_id': 'r50bzaj62mdvoo3nojyfuqeewxlj23',
+                        'redirect_uri': 'http://localhost:42069',
+                        'scope': 'channel:read:redemptions chat:read'}
+
+        def url_callback(url):
+            logging.error(f'Opening browser, if nothing happens, go to {url}')
+            logging.warning('Waiting for token response. '
+                            'If the application does not respond, check the documentation for manual authorization.')
+
+        try:
+            oauth_response = OAuth2Receiver.get_oauth_code(('localhost', 42069), oauth_url, oauth_params,
+                                                           True, url_callback, 300)
+        except TimeoutError as err:
+            msg = 'Browser response not received, manual authorization required.'
+            logging.critical(msg)
+            raise RuntimeError(msg) from err
+        except Exception as err:
+            msg = 'OAuth listener failed, manual authorization required.'
+            logging.critical(msg)
+            raise RuntimeError(msg) from err
+
+        config['token'] = oauth_response['access_token']
+        validation_response = validate_token(config['token'])
         logging.info('Saving new token')
         config_file.write_text(toml.dumps(config))
-        validation_response = http_response[1]
 
     return config, validation_response, chat_functions, points_functions
+
 
 
 def chat_listener(config, server_validation, chat_functions):
@@ -533,7 +354,7 @@ def chat_listener(config, server_validation, chat_functions):
                                     timestamp = int(tags['tmi-sent-ts'])
                                     sender = components[1][1:].split('!', maxsplit=1)[0].lower()
                                     # display-name can be empty
-                                    sender_display = sender if not tags.get('display-name') else tags['display_name']
+                                    sender_display = sender if not tags.get('display-name') else tags['display-name']
                                     message = components[4][1:]
                                     # badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs
                                     for func in chat_functions:
@@ -562,13 +383,3 @@ def chat_listener(config, server_validation, chat_functions):
                 logging.critical('Too many chat failures!%s', dead_msg)
                 raise
         sleep_event.wait(retry_count*2)
-
-
-if __name__ == '__main__':
-    config, server_validation, chat_functions, points_functions = load_config()
-
-    if chat_functions:
-        chat_listener(config, server_validation, chat_functions)
-
-    if points_functions:
-        pass
