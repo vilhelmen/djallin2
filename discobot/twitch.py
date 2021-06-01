@@ -225,7 +225,7 @@ def load_config():
         if validation_response is None:
             logging.warning('Existing token looks bad, will need to get a new one')
         else:
-            if validation_response['expires_in'] < 60*24*3:
+            if validation_response['expires_in'] < 60*24*2:
                 logging.info('Token is expiring soon, requesting a new one')
             else:
                 ready = True
