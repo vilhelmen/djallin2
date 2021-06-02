@@ -312,7 +312,6 @@ def load_config(config_file: Path):
     return config, validation_response, chat_functions, points_functions
 
 
-
 def chat_listener(config, server_validation, chat_functions):
     creds = {
         'host': 'irc.chat.twitch.tv',
