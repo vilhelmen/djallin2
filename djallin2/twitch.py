@@ -16,6 +16,7 @@ import random
 import dateutil.parser
 import toml
 import signal
+import pkg_resources
 from . import OAuth2Receiver, SoundServer, StatTracker
 
 logger = logging.getLogger(__name__)
@@ -502,6 +503,10 @@ def launch_system(config_file: Path, quiet: bool = False):
     logger.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
 
+    if not quiet:
+        soundserver.enqueue(SoundServer.SoundRequest(
+            0, 0, Path(pkg_resources.resource_filename(__name__, 'internal/up.mp3')), False))
+
     logger.debug('Booting stats server')
     # uhhhhhhh base the name on the config... somehow? Generate one and write back?
     disable_stats = not any(conf['stats'] for section in listener_conf.values() for conf in section.values())
@@ -526,11 +531,12 @@ def launch_system(config_file: Path, quiet: bool = False):
         shutdown_event.set()
 
     # TODO: Figure out shutdowns in the various bad spots
-    #  (soundserver needing a fake sound, chat listener, (eventually) points listnener)
+    #  (soundserver needing a fake(?) sound, chat listener, (eventually) points listnener)
     shutdown_event.wait()
 
+    if not quiet:
+        soundserver.enqueue(SoundServer.SoundRequest(
+            -1, -1, Path(pkg_resources.resource_filename(__name__, 'internal/down.mp3')), False))
+
     # So here's the deal. If we raise and we're in windows, the terminal window's probably gonna close immediately
-    # so we probably need to wrape this all in a try and if platforms == 'Windows' time.sleep(10) or something
-
-
-
+    # so we probably need to wrap this all in a try and if platforms == 'Windows' time.sleep(10) or something
