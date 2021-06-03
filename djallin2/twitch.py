@@ -230,11 +230,11 @@ def chat_listener_factory(entry_name: str,
             if (not badge_set and not name_set) or badges.keys() & badge_set or sender in name_set:
                 message = message_filter.sub('', message[len(command):]).lower()
                 if target_is_file:
-                    request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target, not chaos)
+                    request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target, not chaos)
                 elif random_mode == 2 or (random_mode == 1 and message == 'random'):
-                    request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
+                    request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
                 else:
-                    request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
+                    request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
         if request is not None:
             sound_server.enqueue(request)
             if stat_track:
@@ -268,11 +268,11 @@ def points_listener_factory(entry_name: str,
         timestamp = int(dateutil.parser.parse('2019-12-11T18:52:53.128421623Z').timestamp() * 1000)
         message = message_filter.sub('', user_input) if user_input else ''
         if target_is_file:
-            request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target, not chaos)
+            request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target, not chaos)
         elif random_mode == 2 or (random_mode == 1 and message == 'random'):
-            request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
+            request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
         else:
-            request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
+            request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
         if request is not None:
             sound_server.enqueue(request)
             if stat_track:

@@ -39,6 +39,7 @@ stats_db = "stats.sqlite"
     # Priority playback means the sound will jump to the front of the playback queue
     #  Priority sounds will be sorted by their arrival time
     priority = false
+    # Track playbacks in a local database
     stats = true
 
 # points.NAME will define a point redemption listener
