@@ -1,4 +1,10 @@
+# Enter token here for manual authorization.
+# Empty/missing/bad tokens will trigger automatic registration
 token = ""
+
+# Database to store stats in, defaults to stats.sqlite.
+# Database will not be setup unless at least one listener uses it
+stats_db = "stats.sqlite"
 
 # chat.NAME will define a chat listener
 # Listeners will be checked in alphabetical order, stopping at the first successful request
@@ -33,6 +39,7 @@ token = ""
     # Priority playback means the sound will jump to the front of the playback queue
     #  Priority sounds will be sorted by their arrival time
     priority = false
+    stats = true
 
 # points.NAME will define a point redemption listener
 [points.sound]
