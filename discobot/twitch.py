@@ -15,11 +15,15 @@ import traceback
 import random
 import dateutil.parser
 import toml
+import signal
 from . import OAuth2Receiver, SoundServer, StatTracker
 
 logger = logging.getLogger(__name__)
 sock_context = ssl.create_default_context()
 sleep_event = threading.Event()
+
+# TODO: this is gonna take ahwile to integrate
+shutdown_event = threading.Event()
 
 
 ready_msg = r"""
@@ -375,16 +379,16 @@ def chat_listener(config, server_validation, chat_functions):
 
                     ssock.send('JOIN {}\r\n'.format(creds['channel']).encode('utf-8'))
                     sleep_event.wait(0.2)
-                    join_status = ssock.recv(512).decode('utf-8').strip()
-                    if '.tmi.twitch.tv JOIN #' not in join_status:
+                    join_status = ssock.recv(512)
+                    if b'.tmi.twitch.tv JOIN #' not in join_status:
                         err_str = f'Failed to join chat: {join_status}'
                         logger.critical(err_str)
                         raise RuntimeError(err_str)
                     # Sometimes it's just late but there's not much I can do about it, I don't want to accidentally
                     #  suck up some partial message :/
-                    if 'End of /NAMES list' not in join_status:
-                        join_status = ssock.recv(512).decode('utf-8').strip()
-                        if 'End of /NAMES list' not in join_status:
+                    if b'End of /NAMES list' not in join_status:
+                        join_status = ssock.recv(512)
+                        if b'End of /NAMES list' not in join_status:
                             err_str = f'Failed to get name listing?: {join_status}'
                             logger.critical(err_str)
                             raise RuntimeError(err_str)
@@ -416,8 +420,9 @@ def chat_listener(config, server_validation, chat_functions):
                         logger.debug(message_buffer)
                         for msg in message_buffer:
                             msg = msg.decode('utf-8')
+                            # We, in theory, shouldn't be able to get an empty message anymore.
+                            # You PROBABLY can't send \r\n in twitch chat lol
                             if msg:
-                                # print('NEWMSG:', msg)
                                 # safe parsing seems tricky.
                                 # PRIVMSG's tmi string is much more complicated than the regular tmi string
                                 # splitting on space up to 5 blocks seems safe. we should only be receiving PRIVMSG and PING
@@ -429,9 +434,7 @@ def chat_listener(config, server_validation, chat_functions):
                                     ssock.send('PONG\r\n'.encode('utf-8'))
                                     # congrats, we made it 5 minutes without dying!
                                     retry_count = 0
-                                    null_count = 0
                                 elif len(components) == 5 and components[2] == 'PRIVMSG':
-                                    # user message, send to routing. Echo?
                                     try:
                                         tags = {k: v for k, v in [x.split('=') for x in components[0][1:].split(';')]}
                                         badges = {k: v for k, v in [x.split('/') for x in tags['badges'].split(',')]}
@@ -463,7 +466,7 @@ def chat_listener(config, server_validation, chat_functions):
         sleep_event.wait(2*retry_count)
 
 
-def launch_system(config_file: Path):
+def launch_system(config_file: Path, quiet: bool = False):
     """
     Do all the things
     :param config_file: Path to config file
@@ -486,13 +489,23 @@ def launch_system(config_file: Path):
     logging.debug('Doing token stuff')
     config['token'], server_validation = do_token_work(config_file)
 
+    logging.debug('Attaching signal handlers')
+
+    def handler(signum, frame):
+        logger.critical(f'SIG{signum}: shutting down')
+        shutdown_event.set()
+
+    # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
     logger.debug('Starting sound server')
-    soundserver = SoundServer.SoundServer()
+    soundserver = SoundServer.SoundServer(shutdown_event)
 
     logger.debug('Booting stats server')
     # uhhhhhhh base the name on the config... somehow? Generate one and write back?
-    # FIXME: start a fake server if nothing is requesting stats
-    statserver = StatTracker.StatTracker(Path('stats.sqlite'))
+    disable_stats = not any(conf['stats'] for section in listener_conf.values() for conf in section.values())
+    statserver = StatTracker.StatTracker(Path(config.get('stats_db', 'stats.sqlite')), shutdown_event, disable_stats)
 
     chat_functions, points_functions = build_listeners(listener_conf, soundserver, statserver)
 
@@ -500,15 +513,24 @@ def launch_system(config_file: Path):
     points_thread = None
 
     if chat_functions:
+        # daemonize because I can't think of a nice way to integrate shutdown yet
         chat_thread = threading.Thread(target=chat_listener, args=(config, server_validation, chat_functions),
-                                       name='chat_listener')
+                                       name='chat_listener', daemon=True)
         chat_thread.start()
 
     if points_thread:
         logger.critical('Lol no points')
 
-    # lol uhh I don't have a shutdown plan yet. maybe just sleep on an event the listeners check?? somehow??
-    # or just let them SIGINT us lol
-    # But also there's no way to alert the stat tracker to shutdown hmm. Caught by del???
-    # TODO: register a stat server shutdown with atexit??
+    if not chat_functions and not points_functions:
+        logging.critical('Nothing configured??')
+        shutdown_event.set()
+
+    # TODO: Figure out shutdowns in the various bad spots
+    #  (soundserver needing a fake sound, chat listener, (eventually) points listnener)
+    shutdown_event.wait()
+
+    # So here's the deal. If we raise and we're in windows, the terminal window's probably gonna close immediately
+    # so we probably need to wrape this all in a try and if platforms == 'Windows' time.sleep(10) or something
+
+
 

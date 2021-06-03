@@ -168,3 +168,6 @@ venv.bak/
 .iml
 
 creds.*
+
+stats.sqlite
+

@@ -1,5 +1,5 @@
 toml
 tomlkit
 requests
-numpy
 python-dateutil
+websockets

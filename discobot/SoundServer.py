@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from dataclasses import dataclass, field
 import time
+import typing
 
 
 logger = logging.getLogger(__name__)
@@ -25,10 +26,14 @@ class SoundRequest:
 
 # Playsound is alright, but it could be better and it seems to be leaking resources in windows
 class SoundServer:
-    def __init__(self):
+    def __init__(self, shutdown_event: typing.Union[threading.Event, None] = None):
         self._sound_queue = queue.PriorityQueue()
         self._sound_thread = None
-        self._shutdown = threading.Event()
+        # Not a perfect solution, playback thread will still get stuck on the queue get
+        if shutdown_event is not None:
+            self._shutdown = shutdown_event
+        else:
+            self._shutdown = threading.Event()
 
         system = platform.system()
 
@@ -85,6 +90,10 @@ class SoundServer:
             def _queue_listener():
                 while not self._shutdown.is_set():
                     try:
+                        # UGH adding a timeout will get rid of the need for a shutdown sound
+                        # But I hate the idea of this raising in too tight of a loop
+                        # But too long of a timeout will cause it to hang
+                        # TODO: Figure this out, it stays a daemon thread for now
                         sr = self._sound_queue.get(True)
                         if sr.request is None:
                             continue
@@ -93,6 +102,8 @@ class SoundServer:
                             now = time.time()
                             while close_list and close_list[0][0] < now:
                                 _mci_cmd(close_list.pop(0)[1])
+                    except queue.Empty:
+                        pass
                     except Exception as err:
                         logging.error(err)
 
@@ -106,8 +117,8 @@ class SoundServer:
             self._sound_thread.start()
 
         elif system == 'Darwin':
-            # Just import playsound??? Playsound is missing a pyobjc requirement
-            # raise NotImplementedError('TODO: OSX. Just run the windows build in wine.')
+            # TODO: ingest playsound's osx solution? it's not too bad, but it does use time.sleep
+            # Playsound is missing a pyobjc requirement
             # import pyobjc
             import playsound
 
