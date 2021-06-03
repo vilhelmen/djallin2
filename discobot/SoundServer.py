@@ -89,7 +89,7 @@ class SoundServer:
                         if sr.request is None:
                             continue
                         _win_play(sr.request, sr.block)
-                        if close_list and sr.empty():
+                        if close_list and self._sound_queue.empty():
                             now = time.time()
                             while close_list and close_list[0][0] < now:
                                 _mci_cmd(close_list.pop(0)[1])

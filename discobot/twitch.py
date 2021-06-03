@@ -510,3 +510,5 @@ def launch_system(config_file: Path):
     # lol uhh I don't have a shutdown plan yet. maybe just sleep on an event the listeners check?? somehow??
     # or just let them SIGINT us lol
     # But also there's no way to alert the stat tracker to shutdown hmm. Caught by del???
+    # TODO: register a stat server shutdown with atexit??
+
