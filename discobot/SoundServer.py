@@ -102,12 +102,27 @@ class SoundServer:
                     except Exception as err:
                         logging.error(err)
 
-            self._sound_thread = threading.Thread(target=_queue_listener, daemon=True)
+            self._sound_thread = threading.Thread(target=_queue_listener, daemon=True, name='win_sounds')
             self._sound_thread.start()
 
         elif system == 'Darwin':
             # Just import playsound??? Playsound is missing a pyobjc requirement
-            raise NotImplementedError('TODO: OSX. Just run the windows build in wine.')
+            # raise NotImplementedError('TODO: OSX. Just run the windows build in wine.')
+            # import pyobjc
+            import playsound
+
+            def _queue_listener():
+                while not self._shutdown.is_set():
+                    try:
+                        sr = self._sound_queue.get(True)
+                        if sr.request is None:
+                            continue
+                        playsound.playsound(str(sr.request), sr.block)
+                    except Exception as err:
+                        logging.error(err)
+
+            self._sound_thread = threading.Thread(target=_queue_listener, daemon=True, name='mac_sounds')
+            self._sound_thread.start()
         else:
             # self._play_func = self._tuxplay
             raise NotImplementedError('TODO: playsound for linux is iffy. Just run the windows build in wine')

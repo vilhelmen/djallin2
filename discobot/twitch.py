@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
+import os
 import re
 import socket
 import ssl
@@ -11,7 +12,10 @@ import typing
 import tomlkit
 import requests
 import traceback
-from . import OAuth2Receiver
+import random
+import dateutil.parser
+import toml
+from . import OAuth2Receiver, SoundServer, StatTracker
 
 logger = logging.getLogger(__name__)
 sock_context = ssl.create_default_context()
@@ -80,30 +84,32 @@ def validate_token(oauth_token):
         raise RuntimeError(err_msg)
 
 
-def build_and_validate_conf(user_config):
+def build_and_validate_listener_conf(config):
     """
-    Check configuration shape, build listeners
+    Check configuration shape and prep listener data
     :param config: config file data
     :return: listener configuration
     """
     # First, find all the chat and point listeners. then unkink all the links
     listener_conf = {
-        'chat': {k: v for k, v in user_config.get('chat',  {}).items() if 'link' not in v},
-        'points': {k: v for k, v in user_config.get('points',  {}).items() if 'link' not in v}
+        'chat': {k: v for k, v in config.get('chat',  {}).items() if 'link' not in v},
+        'points': {k: v for k, v in config.get('points',  {}).items() if 'link' not in v}
     }
 
     section = None
     name = None
     try:
         for section in listener_conf.keys():
-            for name, conf in {k: v for k, v in user_config.get(section,  {}).items() if 'link' in v}.items():
+            for name, conf in {k: v for k, v in config.get(section,  {}).items() if 'link' in v}.items():
                 source = conf['link'].split('.')
                 # keys set in the linker override the linkee but I'm not gonna announce that
                 instance = listener_conf[source[0]][source[1]] | conf
                 instance.pop('link', None)
+                instance.pop('link', None)
                 if section == 'points':
                     instance.pop('who', None)
                     instance.pop('command', None)
+                listener_conf[section][name] = instance
     except Exception as err:
         logger.critical(f'Error reconstructing link for {section}.{name}: {err}')
         raise
@@ -117,7 +123,8 @@ def build_and_validate_conf(user_config):
             'random': (int,),
             'priority': (bool,),
             'stats': (bool,),
-            'rewardname': (str,)
+            'rewardname': (str,),
+            'chaos': (bool,),
         },
         'chat': {
             'names': (list, type(None)),
@@ -127,6 +134,7 @@ def build_and_validate_conf(user_config):
             'random': (int, type(None)),
             'priority': (bool,),
             'stats': (bool,),
+            'chaos': (bool,),
         }
     }
     try:
@@ -139,11 +147,12 @@ def build_and_validate_conf(user_config):
                 if section == 'chat':
                     conf['names'] = set(conf.get('names', []))
                     conf['badges'] = set(conf.get('badges', []))
-                conf['target'] = Path(conf['target']).absolute()
+                conf['target'] = Path(conf['target'])
                 # I guess we should raise if it's missing
                 assert conf['target'].exists()
                 conf['random'] = conf.get('random', 0)
                 conf['stats'] = conf.get('stats', False)
+                conf['chaos'] = conf.get('chaos', False)
                 if conf['random'] not in {0, 1, 2}:
                     conf['random'] = 0
                 conf['priority'] = conf.get('priority', False)
@@ -151,8 +160,10 @@ def build_and_validate_conf(user_config):
         logger.critical(f'Error validating config for {section}.{name}: {err}')
         raise
 
-    # Cool. Build listeners
-    # Discard empty sections
+    return listener_conf
+
+
+def build_listeners(listener_conf, sound_server, stat_server):
     chat_functions = []
     points_functions = {}
     try:
@@ -160,14 +171,19 @@ def build_and_validate_conf(user_config):
             for name, conf in sorted(listener_conf[section].items()):
                 if section == 'chat':
                     chat_functions.append(
-                        chat_listener_factory(name, conf['stats'], conf['badges'], conf['names'], conf['target'],
-                                              conf['target'].is_file(), conf['command'], conf['random'],
-                                              conf['priority'])
+                        chat_listener_factory(name, sound_server, conf['stats'], stat_server, conf['badges'],
+                                              conf['names'], conf['target'], conf['target'].is_file(),
+                                              [] if conf['target'].is_file() else
+                                              [_ for _ in conf['target'].glob('*.mp3')],
+                                              conf['command'], conf['random'], conf['priority'], conf['chaos'])
                     )
                 elif section == 'points':
-                    points_functions[conf['name']] = points_listener_factory(name, conf['stats'], conf['target'],
-                                                                             conf['target'].is_file(),
-                                                                             conf['random'], conf['priority'])
+                    points_functions[conf['name']] = \
+                        points_listener_factory(name, sound_server, conf['stats'], stat_server, conf['target'],
+                                                conf['target'].is_file(),
+                                                [] if conf['target'].is_file() else
+                                                [_ for _ in conf['target'].glob('*.mp3')],
+                                                conf['random'], conf['priority'], conf['chaos'])
                 else:
                     raise RuntimeError(f'Error building listeners, no known section {section}')
     except Exception as err:
@@ -182,14 +198,18 @@ message_filter = re.compile(r'\W')
 
 
 def chat_listener_factory(entry_name: str,
+                          sound_server: SoundServer.SoundServer,
                           stat_track: bool,
+                          stat_server: StatTracker.StatTracker,
                           badge_set: set,
                           name_set: set,
                           target: Path,
                           target_is_file: bool,
+                          target_file_list: list,
                           command: str,
                           random_mode: int,
-                          priority_playback: bool) -> typing.Callable[[dict, dict, int, str, str, str], bool]:
+                          priority_playback: bool,
+                          chaos: bool) -> typing.Callable[[dict, dict, int, str, str, str], bool]:
     def listener(badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs) -> bool:
         """
         Checks various filters against the request and queues a sound.
@@ -204,27 +224,32 @@ def chat_listener_factory(entry_name: str,
         request = None
         if message.startswith(command):
             if (not badge_set and not name_set) or badges.keys() & badge_set or sender in name_set:
-                message = message_filter.sub('', message[len(command):])
+                message = message_filter.sub('', message[len(command):]).lower()
                 if target_is_file:
-                    request = SoundRequest(0 if priority_playback else 100, timestamp, target)
-                if random_mode == 2 or (random_mode == 1 and message == 'random'):
-                    # TODO: random selection
-                    pass
+                    request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target, not chaos)
+                elif random_mode == 2 or (random_mode == 1 and message == 'random'):
+                    request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
                 else:
-                    request = SoundRequest(0 if priority_playback else 100, timestamp, target / (message + '.mp3'))
+                    request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
         if request is not None:
-            sound_queue.put(request)
+            sound_server.enqueue(request)
+            if stat_track:
+                stat_server.submit('chat', sender, entry_name, timestamp, message)
             return True
         return False
     return listener
 
 
 def points_listener_factory(entry_name: str,
+                            sound_server: SoundServer.SoundServer,
                             stat_track: bool,
+                            stat_server: StatTracker.StatTracker,
                             target: Path,
                             target_is_file: bool,
+                            target_file_list: list,
                             random_mode: int,
-                            priority_playback: bool) -> typing.Callable[[dict, str, dict, str], None]:
+                            priority_playback: bool,
+                            chaos: bool) -> typing.Callable[[dict, str, dict, str], None]:
     def listener(user: dict, redeemed_at: str, reward: dict, user_input: typing.Optional[str] = None, **kwargs) -> None:
         """
         Reads a points redemption and does whatever it needs to do
@@ -239,29 +264,25 @@ def points_listener_factory(entry_name: str,
         timestamp = int(dateutil.parser.parse('2019-12-11T18:52:53.128421623Z').timestamp() * 1000)
         message = message_filter.sub('', user_input) if user_input else ''
         if target_is_file:
-            request = SoundRequest(0 if priority_playback else 100, timestamp, target)
-        if random_mode == 2 or (random_mode == 1 and message == 'random'):
-            # TODO: random selection
-            pass
+            request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target, not chaos)
+        elif random_mode == 2 or (random_mode == 1 and message == 'random'):
+            request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
         else:
-            request = SoundRequest(0 if priority_playback else 100, timestamp, target / (message + '.mp3'))
+            request = SoundServer.SoundRequest(0 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
         if request is not None:
-            sound_queue.put(request)
+            sound_server.enqueue(request)
+            if stat_track:
+                stat_server.submit('chat', sender, entry_name, timestamp, message)
     return listener
 
 
-def load_config(config_file: Path):
+def do_token_work(config_file: Path):
     """
-    Load the config file, build listener functions, dial in to twitch/generate token
-    :return: config dict, server validation response, chat listener function list, point reward function list
+    Check token stuff, potentially update config file
+    :param config_file: Path to conf
+    :return: token, server validation data
     """
-    try:
-        config = tomlkit.loads(config_file.read_text())
-    except Exception as err:
-        logger.critical('Error loading configuration file: %s', err)
-        raise
-
-    chat_functions, points_functions = build_and_validate_conf(copy.deepcopy(dict(config)))
+    config = tomlkit.loads(config_file.read_text())
 
     ready = False
     if config.get('token'):
@@ -309,7 +330,7 @@ def load_config(config_file: Path):
         logger.info('Saving new token')
         config_file.write_text(tomlkit.dumps(config))
 
-    return config, validation_response, chat_functions, points_functions
+    return config['token'], validation_response
 
 
 def chat_listener(config, server_validation, chat_functions):
@@ -331,15 +352,15 @@ def chat_listener(config, server_validation, chat_functions):
             #  I don't like that the websocket library has an FAQ section for "why is it slow"
             # Need to see what a network disconnect looks like
             #  MacOS, baby. this just keeps working if you turn the network off and on
-            with socket.create_connection((creds['host'], creds['port']), timeout=2*retry_count) as sock:
+            with socket.create_connection((creds['host'], creds['port'])) as sock:
                 sock.setblocking(True)  # The docs DON'T say it DOESN'T work on windows
                 with sock_context.wrap_socket(sock, server_hostname=creds['host']) as ssock:
                     ssock.send('PASS {}\r\nNICK {}\r\n'.format(creds['oauth'], creds['user']).encode('utf-8'))
                     # ":tmi.twitch.tv NOTICE * :Login authentication failed" on bad oauth. idk about expired
                     # We should expect a "GLHF!" otherwise in the first response
                     sleep_event.wait(0.2)
-                    login_status = ssock.recv(512).decode('utf-8').strip()
-                    if 'GLHF!' not in login_status:
+                    login_status = ssock.recv(512)
+                    if b'GLHF!' not in login_status:
                         err_str = f'Failed to login to chat: {login_status}'
                         logger.critical(err_str)
                         raise RuntimeError(err_str)
@@ -359,7 +380,14 @@ def chat_listener(config, server_validation, chat_functions):
                         err_str = f'Failed to join chat: {join_status}'
                         logger.critical(err_str)
                         raise RuntimeError(err_str)
-
+                    # Sometimes it's just late but there's not much I can do about it, I don't want to accidentally
+                    #  suck up some partial message :/
+                    if 'End of /NAMES list' not in join_status:
+                        join_status = ssock.recv(512).decode('utf-8').strip()
+                        if 'End of /NAMES list' not in join_status:
+                            err_str = f'Failed to get name listing?: {join_status}'
+                            logger.critical(err_str)
+                            raise RuntimeError(err_str)
                     logger.info('Connected to chat!')
                     while True:
                         # Ok, here's the problem.
@@ -371,6 +399,7 @@ def chat_listener(config, server_validation, chat_functions):
                         # Yikes, we might cut a multibyte character in half with a partial read. Is that a raise?
                         # Let's not decode until after we've processed linebreaks
                         msg = ssock.recv(4096)
+                        logger.debug(msg)
                         if not len(msg):
                             # you literally can't send zero bytes. We got hung up on.
                             # Strange that is is, seemingly, the only way to find out besides a fileno of -1
@@ -380,10 +409,11 @@ def chat_listener(config, server_validation, chat_functions):
                         # max twitch message len is 512 MAYBE
                         # It's IRC in that it's mostly IRC-shaped
                         # Tags bump that significantly
-                        partial_read = not msg.endswith(br'\r\n')
-                        message_buffer = msg.split(br'\r\n')
+                        partial_read = not msg.endswith(b'\r\n')
+                        message_buffer = msg.split(b'\r\n')
                         if partial_read:
                             leftovers = message_buffer.pop()
+                        logger.debug(message_buffer)
                         for msg in message_buffer:
                             msg = msg.decode('utf-8')
                             if msg:
@@ -430,3 +460,53 @@ def chat_listener(config, server_validation, chat_functions):
             if retry_count >= 3:
                 logger.critical('Too many chat failures!%s', dead_msg)
                 raise
+        sleep_event.wait(2*retry_count)
+
+
+def launch_system(config_file: Path):
+    """
+    Do all the things
+    :param config_file: Path to config file
+    """
+    try:
+        config = toml.loads(config_file.read_text())
+    except Exception as err:
+        logger.critical('Error loading configuration file: %s', err)
+        raise
+
+    # ugh we said paths would be relative to the conf file
+    # We might as well chdir, this means we aren't logging/saving abspaths everywhere
+    os.chdir(config_file.absolute().parent)
+
+    logger.debug('Checking config')
+    listener_conf = build_and_validate_listener_conf(copy.deepcopy(config))
+
+    logging.debug(listener_conf)
+
+    logging.debug('Doing token stuff')
+    config['token'], server_validation = do_token_work(config_file)
+
+    logger.debug('Starting sound server')
+    soundserver = SoundServer.SoundServer()
+
+    logger.debug('Booting stats server')
+    # uhhhhhhh base the name on the config... somehow? Generate one and write back?
+    # FIXME: start a fake server if nothing is requesting stats
+    statserver = StatTracker.StatTracker(Path('stats.sqlite'))
+
+    chat_functions, points_functions = build_listeners(listener_conf, soundserver, statserver)
+
+    chat_thread = None
+    points_thread = None
+
+    if chat_functions:
+        chat_thread = threading.Thread(target=chat_listener, args=(config, server_validation, chat_functions),
+                                       name='chat_listener')
+        chat_thread.start()
+
+    if points_thread:
+        logger.critical('Lol no points')
+
+    # lol uhh I don't have a shutdown plan yet. maybe just sleep on an event the listeners check?? somehow??
+    # or just let them SIGINT us lol
+    # But also there's no way to alert the stat tracker to shutdown hmm. Caught by del???

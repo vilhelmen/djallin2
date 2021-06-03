@@ -52,21 +52,4 @@ if __name__ == '__main__':
                         format='%(levelname)s:%(threadName)s:%(message)s')
     logger.setLevel(logging.DEBUG if args['debug'] else logging.INFO)
 
-
-if __name__ == '__main__':
-    args = run_argparse()
-
-    twitch.load_config()
-    config, server_validation, chat_functions, points_functions = load_config()
-
-    if chat_functions:
-        chat_listener(config, server_validation, chat_functions)
-
-    if points_functions:
-        pass
-
-    if chat_functions or points_functions:
-        # start sound thread
-        pass
-    else:
-        logging.critical('Nothing to do!')
+    twitch.launch_system(args['config'])
