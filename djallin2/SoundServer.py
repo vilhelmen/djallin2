@@ -9,9 +9,6 @@ import time
 import typing
 
 
-logger = logging.getLogger(__name__)
-
-
 class PlaybackException(Exception):
     pass
 
@@ -36,6 +33,7 @@ class SoundServer:
             self._shutdown = threading.Event()
 
         system = platform.system()
+        close_list = []
 
         if system == 'Windows':
             # OK SO MCI IS LIKE SOME WINDOWS 3.1 GARBAGE
@@ -45,7 +43,6 @@ class SoundServer:
             # But that's a level of complicated that... no.
             # ALSO FIXME: This is a nightmare of glued together variables. subclass?
             import ctypes as ct
-            import random
 
             def _mci_cmd(command: str) -> str:
                 # It's 20XX, I'm sending a unicode string
@@ -58,10 +55,12 @@ class SoundServer:
                 return response.value
 
             # LMAO COOL MCI DEVICES ARE PER THREAD SO I CAN'T EVEN CLOSE THEM ELSEWHERE
-            close_list = []
+            counter = 0
 
-            def _win_play(path, block):
-                alias = f'_sound_{str(random.random())}'
+            def _play_func(path, block):
+                nonlocal counter  # offload the work from random, sounds are silo'd per thread, a counter is fine
+                alias = f'_sound_{str(counter)}'
+                counter += 1
                 _mci_cmd(f'open "{str(path)}" alias {alias}')
                 if block:
                     # Waiting works even when it can't accurately say how long a sound is lol
@@ -87,56 +86,70 @@ class SoundServer:
                     # https://github.com/wine-mirror/wine/blob/master/dlls/winmm/tests/mci.c#L143
                     # But man it's just so much effort. And who knows how that will interrupt our process.
 
-            def _queue_listener():
-                while not self._shutdown.is_set():
-                    try:
-                        # UGH adding a timeout will get rid of the need for a shutdown sound
-                        # But I hate the idea of this raising in too tight of a loop
-                        # But too long of a timeout will cause it to hang
-                        # TODO: Figure this out, it stays a daemon thread for now
-                        sr = self._sound_queue.get(True)
-                        if sr.request is None:
-                            continue
-                        _win_play(sr.request, sr.block)
-                        if close_list and self._sound_queue.empty():
-                            now = time.time()
-                            while close_list and close_list[0][0] < now:
-                                _mci_cmd(close_list.pop(0)[1])
-                    except queue.Empty:
-                        pass
-                    except Exception as err:
-                        logging.error(err)
-
-                for entry in close_list:
-                    try:
-                        _mci_cmd(entry[1])
-                    except Exception as err:
-                        logging.error(err)
-
-            self._sound_thread = threading.Thread(target=_queue_listener, daemon=True, name='win_sounds')
-            self._sound_thread.start()
+            def _close_func(cmd):
+                _mci_cmd(cmd)
 
         elif system == 'Darwin':
-            # TODO: ingest playsound's osx solution? it's not too bad, but it does use time.sleep
-            # Playsound is missing a pyobjc requirement
-            # import pyobjc
-            import playsound
+            from AppKit import NSSound
+            from Foundation import NSURL
 
-            def _queue_listener():
-                while not self._shutdown.is_set():
-                    try:
-                        sr = self._sound_queue.get(True)
-                        if sr.request is None:
-                            continue
-                        playsound.playsound(str(sr.request), sr.block)
-                    except Exception as err:
-                        logging.error(err)
+            def _play_func(path, block):
+                # Eat it NSURL I don't need you
+                target = path.absolute().as_uri()
+                # Hell, has to be an NSURL or NSString
+                url = NSURL.URLWithString_(target)
+                sound = NSSound.alloc().initWithContentsOfURL_byReference_(url, True)
+                # NSSound warns that the sound will be killed if this object gets GC'd
+                # And we've got, like, LAYERS of GC here
+                # No guarantee it won't get GC'd if we are under heavy load
+                if not sound:
+                    raise PlaybackException(f'Could not load {target}')
+                sound.play()
+                if block:
+                    shutdown_event.wait(sound.duration())
+                else:
+                    close_time = time.time() + sound.duration() + 10
+                    close_list.append((close_time, sound))
 
-            self._sound_thread = threading.Thread(target=_queue_listener, daemon=True, name='mac_sounds')
-            self._sound_thread.start()
+            def _close_func(sound):
+                # I mean, I could call dealloc??
+                # But I'd rather not interfere
+                pass
+
         else:
             # self._play_func = self._tuxplay
             raise NotImplementedError('TODO: playsound for linux is iffy. Just run the windows build in wine')
+
+        def _queue_listener():
+            while not self._shutdown.is_set():
+                try:
+                    # UGH adding a timeout will get rid of the need for a shutdown sound
+                    # But I hate the idea of this raising in too tight of a loop
+                    # But too long of a timeout will cause it to hang
+                    # TODO: Figure this out, it stays a daemon thread for now
+                    sr = self._sound_queue.get(True)
+                    logging.debug(f'Queue play {sr}')
+                    if sr.request is None:
+                        continue
+                    _play_func(sr.request, sr.block)
+                    if close_list and self._sound_queue.empty():
+                        now = time.time()
+                        while close_list and close_list[0][0] < now:
+                            logging.debug(f'Closing {close_list[0][1]}')
+                            _close_func(close_list.pop(0)[1])
+                except queue.Empty:
+                    pass
+                except Exception as err:
+                    logging.error(err)
+
+            for entry in close_list:
+                try:
+                    _close_func(entry[1])
+                except Exception as err:
+                    logging.error(err)
+
+        self._sound_thread = threading.Thread(target=_queue_listener, daemon=True, name='sounds')
+        self._sound_thread.start()
 
     def enqueue(self, request: SoundRequest):
         self._sound_queue.put(request)

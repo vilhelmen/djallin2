@@ -21,8 +21,7 @@ def run_argparse():
         return path
 
     parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
-    # FIXME: rename/update .gitignore
-    parser.add_argument('--config', type=path_check_file_exists, default='creds.toml', help='Configuration file')
+    parser.add_argument('--config', type=path_check_file_exists, default='config.txt', help='Configuration file')
     parser.add_argument('--quiet', action='store_true', help='Suppress startup sound')
     parser.add_argument('--debug', action='store_true', help='Extra logging')
     parser.add_argument('--version', action='version',

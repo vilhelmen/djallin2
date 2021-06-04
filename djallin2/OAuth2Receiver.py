@@ -7,7 +7,6 @@ import urllib.parse
 import typing
 import webbrowser
 
-_logging = logging.getLogger(__name__)
 
 # TODO: add a <noscript> warning
 receiver_html = r"""
@@ -114,7 +113,7 @@ def get_oauth_code(bind_config: typing.Tuple[str, int], authorize_url: str, oaut
             self.wfile.write(rejected_html)
             self.wfile.flush()  # Flush because we're goin down
             msg = 'Mismatched OAuth state, your connection may be compromised!'
-            _logging.critical(msg)
+            logging.critical(msg)
             raise RuntimeError(msg)
 
         def do_GET(self):
@@ -141,17 +140,17 @@ def get_oauth_code(bind_config: typing.Tuple[str, int], authorize_url: str, oaut
         def do_HEAD(self):
             self.__set_headers()
 
-    _logging.info('Booting HTTP server')
+    logging.info('Booting HTTP server')
     try:
         httpd = HTTPServer(bind_config, TokenReceiver)
     except Exception as err:
-        _logging.critical(f'Error launching HTTP listener: {err}')
+        logging.critical(f'Error launching HTTP listener: {err}')
         raise
     try:
         httpd_thread = threading.Thread(target=httpd.serve_forever, name='oauth_http_worker_', daemon=True)
         httpd_thread.start()
     except Exception as err:
-        _logging.critical(f'Error launching HTTP worker: {err}')
+        logging.critical(f'Error launching HTTP worker: {err}')
         httpd.shutdown()
         httpd.server_close()
         raise

@@ -9,8 +9,6 @@ import queue
 import traceback
 import typing
 
-logger = logging.getLogger(__name__)
-
 
 class StatTracker:
     def __init__(self, database: Path, shutdown_event: typing.Union[threading.Event, None] = None, disable: bool = False):
@@ -43,7 +41,7 @@ class StatTracker:
         while not self._shutdown.is_set():
             self._shutdown.wait(300)  # flush every 5 minutes
             if not self._queue.empty():
-                logger.info('Saving stats')
+                logging.info('Saving stats')
                 entry = None
                 try:
                     with db:
@@ -51,8 +49,8 @@ class StatTracker:
                             entry = self._queue.get()
                             db.execute('INSERT INTO stats VALUES (?, ?, ?, ?, ?)', entry)
                 except Exception as err:
-                    logger.error(f'{err} during stat database flush for entry {entry}')
-                    logger.error(traceback.format_exc())
+                    logging.error(f'{err} during stat database flush for entry {entry}')
+                    logging.error(traceback.format_exc())
         db.close()
 
     def _stub_submit(self, *args, **kwargs):

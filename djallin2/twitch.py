@@ -19,7 +19,6 @@ import signal
 import pkg_resources
 from . import OAuth2Receiver, SoundServer, StatTracker
 
-logger = logging.getLogger(__name__)
 sock_context = ssl.create_default_context()
 sleep_event = threading.Event()
 
@@ -60,13 +59,13 @@ def validate_token(oauth_token):
     :param oauth_token: user token
     :return: validation response if valid or None
     """
-    logger.info('Phoning Papa Bezos...')
+    logging.info('Phoning Papa Bezos...')
     try:
         resp = requests.get('https://id.twitch.tv/oauth2/validate',
                             headers={'Authorization': 'OAuth ' + oauth_token})
     except Exception as err:
         err_msg = f'Error contacting Twitch, internet issues? {err}'
-        logger.critical(err_msg)
+        logging.critical(err_msg)
         raise RuntimeError(err_msg) from err
 
     if resp.status_code == 200:
@@ -75,17 +74,17 @@ def validate_token(oauth_token):
         has = set(resp['scopes'])
         missing = need - has
         if missing:
-            logger.warning(f'Token is missing required scopes: {missing}. Throwing it out.')
+            logging.warning(f'Token is missing required scopes: {missing}. Throwing it out.')
             return None
         elif resp['expires_in'] < 60*24*2:
-            logger.warning('Token is expiring soon, requesting a new one')
+            logging.warning('Token is expiring soon, requesting a new one')
             return None
         return resp
     elif resp.status_code == 401:
         return None
     else:
         err_msg = f'Unrecognized status code during token check: {resp.status_code}, unsure how to proceed.'
-        logger.critical(err_msg)
+        logging.critical(err_msg)
         raise RuntimeError(err_msg)
 
 
@@ -116,7 +115,7 @@ def build_and_validate_listener_conf(config):
                     instance.pop('command', None)
                 listener_conf[section][name] = instance
     except Exception as err:
-        logger.critical(f'Error reconstructing link for {section}.{name}: {err}')
+        logging.critical(f'Error reconstructing link for {section}.{name}: {err}')
         raise
 
     # Ok, cool. Do some rough type validation
@@ -162,7 +161,7 @@ def build_and_validate_listener_conf(config):
                     conf['random'] = 0
                 conf['priority'] = conf.get('priority', False)
     except Exception as err:
-        logger.critical(f'Error validating config for {section}.{name}: {err}')
+        logging.critical(f'Error validating config for {section}.{name}: {err}')
         raise
 
     return listener_conf
@@ -192,7 +191,7 @@ def build_listeners(listener_conf, sound_server, stat_server):
                 else:
                     raise RuntimeError(f'Error building listeners, no known section {section}')
     except Exception as err:
-        logger.critical(f'Error building listener for {section}.{name}: {err}')
+        logging.critical(f'Error building listener for {section}.{name}: {err}')
         raise
 
     return chat_functions, points_functions
@@ -298,7 +297,7 @@ def do_token_work(config_file: Path):
         else:
             # BE GONE FROM ME SHITTY TOKEN
             config['token'] = ''
-            logger.info('Deleting old token')
+            logging.info('Deleting old token')
             config_file.write_text(tomlkit.dumps(config))
 
     if not ready:
@@ -310,8 +309,8 @@ def do_token_work(config_file: Path):
                         'scope': 'channel:read:redemptions chat:read'}
 
         def url_callback(url):
-            logger.error(f'Opening browser, if nothing happens, go to {url}')
-            logger.warning('Waiting for token response. '
+            logging.error(f'Opening browser, if nothing happens, go to {url}')
+            logging.warning('Waiting for token response. '
                             'If the application does not respond, check the documentation for manual authorization.')
 
         try:
@@ -319,20 +318,20 @@ def do_token_work(config_file: Path):
                                                            True, url_callback, 300)
         except TimeoutError as err:
             msg = 'Browser response not received, manual authorization required.'
-            logger.critical(msg)
+            logging.critical(msg)
             raise RuntimeError(msg) from err
         except Exception as err:
             msg = 'OAuth listener failed, manual authorization required.'
-            logger.critical(msg)
+            logging.critical(msg)
             raise RuntimeError(msg) from err
 
         config['token'] = oauth_response['access_token']
         validation_response = validate_token(config['token'])
         if validation_response is None:
             msg = "New token is bad???"
-            logger.critical(msg)
+            logging.critical(msg)
             raise RuntimeError(msg)
-        logger.info('Saving new token')
+        logging.info('Saving new token')
         config_file.write_text(tomlkit.dumps(config))
 
     return config['token'], validation_response
@@ -367,7 +366,7 @@ def chat_listener(config, server_validation, chat_functions):
                     login_status = ssock.recv(512)
                     if b'GLHF!' not in login_status:
                         err_str = f'Failed to login to chat: {login_status}'
-                        logger.critical(err_str)
+                        logging.critical(err_str)
                         raise RuntimeError(err_str)
 
                     ssock.send('CAP REQ :twitch.tv/tags\r\n'.encode('utf-8'))
@@ -375,7 +374,7 @@ def chat_listener(config, server_validation, chat_functions):
                     cap_add_status = ssock.recv(512).decode('utf-8').strip()
                     if cap_add_status != ':tmi.twitch.tv CAP * ACK :twitch.tv/tags':
                         err_str = f'Failed to activate tag cap: {cap_add_status}'
-                        logger.critical(err_str)
+                        logging.critical(err_str)
                         raise RuntimeError(err_str)
 
                     ssock.send('JOIN {}\r\n'.format(creds['channel']).encode('utf-8'))
@@ -383,7 +382,7 @@ def chat_listener(config, server_validation, chat_functions):
                     join_status = ssock.recv(512)
                     if b'.tmi.twitch.tv JOIN #' not in join_status:
                         err_str = f'Failed to join chat: {join_status}'
-                        logger.critical(err_str)
+                        logging.critical(err_str)
                         raise RuntimeError(err_str)
                     # Sometimes it's just late but there's not much I can do about it, I don't want to accidentally
                     #  suck up some partial message :/
@@ -391,9 +390,9 @@ def chat_listener(config, server_validation, chat_functions):
                         join_status = ssock.recv(512)
                         if b'End of /NAMES list' not in join_status:
                             err_str = f'Failed to get name listing?: {join_status}'
-                            logger.critical(err_str)
+                            logging.critical(err_str)
                             raise RuntimeError(err_str)
-                    logger.info('Connected to chat!')
+                    logging.info('Connected to chat!')
                     while True:
                         # Ok, here's the problem.
                         #  The buffer could be backed up enough that we receive a partial message.
@@ -404,7 +403,7 @@ def chat_listener(config, server_validation, chat_functions):
                         # Yikes, we might cut a multibyte character in half with a partial read. Is that a raise?
                         # Let's not decode until after we've processed linebreaks
                         msg = ssock.recv(4096)
-                        logger.debug(msg)
+                        logging.debug(msg)
                         if not len(msg):
                             # you literally can't send zero bytes. We got hung up on.
                             # Strange that is is, seemingly, the only way to find out besides a fileno of -1
@@ -416,9 +415,9 @@ def chat_listener(config, server_validation, chat_functions):
                         # Tags bump that significantly
                         partial_read = not msg.endswith(b'\r\n')
                         message_buffer = msg.split(b'\r\n')
+                        # NOTE: we seem to be getting b'' off the end of the split because lol wtf?????
                         if partial_read:
                             leftovers = message_buffer.pop()
-                        logger.debug(message_buffer)
                         for msg in message_buffer:
                             msg = msg.decode('utf-8')
                             # We, in theory, shouldn't be able to get an empty message anymore.
@@ -431,7 +430,7 @@ def chat_listener(config, server_validation, chat_functions):
                                 # PING tmi_string
                                 components = msg.split(' ', maxsplit=4)
                                 if components[0] == 'PING':
-                                    logger.info('Responding to chat ping')
+                                    logging.info('Responding to chat ping')
                                     ssock.send('PONG\r\n'.encode('utf-8'))
                                     # congrats, we made it 5 minutes without dying!
                                     retry_count = 0
@@ -451,18 +450,18 @@ def chat_listener(config, server_validation, chat_functions):
                                                 break
                                     except Exception as err:
                                         # FIXME? this isn't a reconnect-level issue, but it's still a problem.
-                                        logger.error(f'Error in message scanner loop: {err}')
-                                        logger.error(traceback.format_exc())
+                                        logging.error(f'Error in message scanner loop: {err}')
+                                        logging.error(traceback.format_exc())
                                 else:
-                                    logger.error(f'Mystery message from twitch, probably fine: {msg}')
+                                    logging.error(f'Mystery message from twitch, probably fine: {msg}')
         except Exception as err:
-            logger.error(crash_msg)
-            logger.error(f'Got {err}')
-            logger.error(traceback.format_exc())
-            logger.error(f'Lost {len(message_buffer) + partial_read} messages :(')
+            logging.error(crash_msg)
+            logging.error(f'Got {err}')
+            logging.error(traceback.format_exc())
+            logging.error(f'Lost {len(message_buffer) + partial_read} messages :(')
             retry_count += 1
             if retry_count >= 3:
-                logger.critical('Too many chat failures!%s', dead_msg)
+                logging.critical('Too many chat failures!%s', dead_msg)
                 raise
         sleep_event.wait(2*retry_count)
 
@@ -475,14 +474,14 @@ def launch_system(config_file: Path, quiet: bool = False):
     try:
         config = toml.loads(config_file.read_text())
     except Exception as err:
-        logger.critical('Error loading configuration file: %s', err)
+        logging.critical('Error loading configuration file: %s', err)
         raise
 
     # ugh we said paths would be relative to the conf file
     # We might as well chdir, this means we aren't logging/saving abspaths everywhere
     os.chdir(config_file.absolute().parent)
 
-    logger.debug('Checking config')
+    logging.debug('Checking config')
     listener_conf = build_and_validate_listener_conf(copy.deepcopy(config))
 
     logging.debug(listener_conf)
@@ -493,21 +492,21 @@ def launch_system(config_file: Path, quiet: bool = False):
     logging.debug('Attaching signal handlers')
 
     def handler(signum, frame):
-        logger.critical(f'SIG{signum}: shutting down')
+        logging.critical(f'SIG{signum}: shutting down')
         shutdown_event.set()
 
     # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
-    logger.debug('Starting sound server')
+    logging.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
 
     if not quiet:
         soundserver.enqueue(SoundServer.SoundRequest(
             0, 0, Path(pkg_resources.resource_filename(__package__, 'internal/up.mp3')), False))
 
-    logger.debug('Booting stats server')
+    logging.debug('Booting stats server')
     # uhhhhhhh base the name on the config... somehow? Generate one and write back?
     disable_stats = not any(conf['stats'] for section in listener_conf.values() for conf in section.values())
     statserver = StatTracker.StatTracker(Path(config.get('stats_db', 'stats.sqlite')), shutdown_event, disable_stats)
@@ -524,7 +523,7 @@ def launch_system(config_file: Path, quiet: bool = False):
         chat_thread.start()
 
     if points_thread:
-        logger.critical('Lol no points')
+        logging.critical('Lol no points')
 
     if not chat_functions and not points_functions:
         logging.critical('Nothing configured??')
