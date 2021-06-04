@@ -6,3 +6,4 @@
 1. more flexible command triggers (regex??)
 1. verify file exists before queueing sound?
 1. add artifact upload to pipleine for non-release builds
+1. windows internal files not found?

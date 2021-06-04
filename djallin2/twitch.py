@@ -505,7 +505,7 @@ def launch_system(config_file: Path, quiet: bool = False):
 
     if not quiet:
         soundserver.enqueue(SoundServer.SoundRequest(
-            0, 0, Path(pkg_resources.resource_filename(__name__, 'internal/up.mp3')), False))
+            0, 0, Path(pkg_resources.resource_filename(__package__, 'internal/up.mp3')), False))
 
     logger.debug('Booting stats server')
     # uhhhhhhh base the name on the config... somehow? Generate one and write back?
@@ -536,7 +536,7 @@ def launch_system(config_file: Path, quiet: bool = False):
 
     if not quiet:
         soundserver.enqueue(SoundServer.SoundRequest(
-            -1, -1, Path(pkg_resources.resource_filename(__name__, 'internal/down.mp3')), False))
+            -1, -1, Path(pkg_resources.resource_filename(__package__, 'internal/down.mp3')), False))
 
     # So here's the deal. If we raise and we're in windows, the terminal window's probably gonna close immediately
     # so we probably need to wrap this all in a try and if platforms == 'Windows' time.sleep(10) or something
