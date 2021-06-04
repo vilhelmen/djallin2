@@ -1,0 +1,32 @@
+name: Build Windows Bundle
+
+on:
+  release:
+    types: [created]
+  push:
+    tags:
+      - v*.*.*
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+    - name: Build
+      run: |
+        pyinstaller chatdj.spec
+    - name: GH Release
+      uses: softprops/action-gh-release@v0.1.5
+      env:
+        GITHUB_TOKEN: ${{ secrets.PYPI_USERNAME }}
+      with:
+        files: dist/chatdj.exe
