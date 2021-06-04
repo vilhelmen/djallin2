@@ -2,6 +2,7 @@
 
 import logging
 import os
+import platform
 import re
 import socket
 import ssl
@@ -531,9 +532,15 @@ def launch_system(config_file: Path, quiet: bool = False):
 
     # TODO: Figure out shutdowns in the various bad spots
     #  (soundserver needing a fake(?) sound, chat listener, (eventually) points listnener)
-    # I think this sleep is preventing interrupts on windows >:C
-    #  Are interrups MainThread only??
-    shutdown_event.wait()
+    # LMFAO FREAKING WINDOWS threading.Event.wait can't be interrupted https://bugs.python.org/issue35935
+    # But since they've been pouring effort into time.sleep to make it not garbage, that might work.
+    if platform.system() == 'Windows':
+        # WINDOWS >:C
+        import time
+        while not shutdown_event.is_set():
+            time.sleep(5)
+    else:
+        shutdown_event.wait()
 
     if not quiet:
         soundserver.enqueue(SoundServer.SoundRequest(
