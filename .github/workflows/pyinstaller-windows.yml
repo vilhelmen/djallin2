@@ -6,6 +6,7 @@ on:
   push:
     tags:
       - v*.*.*
+  workflow_dispatch: {}
 
 jobs:
   deploy:
@@ -26,6 +27,7 @@ jobs:
         pyinstaller chatdj.spec
     - name: GH Release
       uses: softprops/action-gh-release@v0.1.5
+      if: startsWith(github.ref, 'refs/tags/')
       env:
         GITHUB_TOKEN: ${{ secrets.PYPI_USERNAME }}
       with:
