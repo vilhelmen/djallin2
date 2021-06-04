@@ -532,6 +532,8 @@ def launch_system(config_file: Path, quiet: bool = False):
 
     # TODO: Figure out shutdowns in the various bad spots
     #  (soundserver needing a fake(?) sound, chat listener, (eventually) points listnener)
+    # I think this sleep is preventing interrupts on windows >:C
+    #  Are interrups MainThread only??
     shutdown_event.wait()
 
     if not quiet:

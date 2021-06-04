@@ -71,9 +71,9 @@ class SoundServer:
                     # Tests suggest it only supports MS for mp3s, so it's already in MS
                     #  The number seems wildly off in some cases, seems to be bad MP3s?
                     #  Could also be variable bitrate encoding
-                    # mci_cmd(f'set {alias} time format milliseconds')
+                    # _mci_cmd(f'set {alias} time format milliseconds')
                     # Just, idk, add 30 seconds ot be safe
-                    close_time = (int(_mci_cmd(f'status {alias} length')) / 1000) + 30
+                    close_time = (int(_mci_cmd(f'status {alias} length')) / 1000) + 30 + time.time()
                     _mci_cmd(f'play {alias}')
                     close_list.append((close_time, f'close {alias}'))
                     # do NOT get me started on MCI_NOTIFY
