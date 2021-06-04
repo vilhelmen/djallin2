@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 from . import twitch
 import sys
+import pkg_resources
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ def run_argparse():
     parser.add_argument('--config', type=path_check_file_exists, default='creds.toml', help='Configuration file')
     parser.add_argument('--quiet', action='store_true', help='Suppress startup sound')
     parser.add_argument('--debug', action='store_true', help='Extra logging')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s ' + pkg_resources.get_distribution(__package__).version)
 
     return vars(parser.parse_args())
 

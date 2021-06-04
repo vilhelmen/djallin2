@@ -1,13 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+from PyInstaller.utils.hooks import copy_metadata
 
 block_cipher = None
-
 
 a = Analysis(['chatdj.py'],
              pathex=[],
              binaries=[],
-             datas=[('djallin2/internal/*.mp3', 'djallin2/internal')],
+             datas=[*copy_metadata('djallin2'), ('djallin2/internal/*.mp3', 'djallin2/internal')],
              hiddenimports=[],
              hookspath=[],
              runtime_hooks=[],

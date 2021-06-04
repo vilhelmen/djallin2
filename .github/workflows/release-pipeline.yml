@@ -1,0 +1,90 @@
+name: Release Pipeline
+
+on:
+  release:
+    types: [created]
+  push:
+    tags:
+      - v*.*.*
+  workflow_dispatch: {}
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install setuptools wheel twine build
+    - name: Build and publish
+      env:
+        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      run: |
+        python -m build
+        twine upload dist/*
+
+  windows:
+    runs-on: windows-latest
+    # needs: pypi
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller build
+    - name: Build
+      # Don't get me started. Pyinstaller doesn't properly install the target so it's registered with setuptools
+      #  so you need to build locally to get the egg data to inject
+      #  Not only do you have to build it you need the egg string so you have to install it I'm so mad
+      run: |
+        python -m build
+        pip install --editable .
+        pyinstaller chatdj.spec
+        mv dist/chatdj.exe dist/chatdj-win.exe
+    - name: GH Release
+      uses: softprops/action-gh-release@v0.1.5
+      if: startsWith(github.ref, 'refs/tags/')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: dist/chatdj-windows.exe
+
+  mac:
+    runs-on: macos-latest
+    # needs: pypi
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller build
+    - name: Build
+      # Don't get me started. Pyinstaller doesn't properly install the target so it's registered with setuptools
+      #  so you need to build locally to get the egg data to inject
+      #  Not only do you have to build it you need the egg string so you have to install it I'm so mad
+      run: |
+        python -m build
+        pip install --editable .
+        pyinstaller chatdj.spec
+        mv dist/chatdj dist/chatdj-mac
+    - name: GH Release
+      uses: softprops/action-gh-release@v0.1.5
+      if: startsWith(github.ref, 'refs/tags/')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: dist/chatdj-mac

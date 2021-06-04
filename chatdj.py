@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from djallin2 import cli
+import djallin2.cli
 
 if __name__ == '__main__':
-    cli.boot()
+    djallin2.cli.boot()
