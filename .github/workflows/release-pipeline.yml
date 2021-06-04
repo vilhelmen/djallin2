@@ -57,7 +57,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        files: dist/chatdj-windows.exe
+        files: dist/chatdj-win.exe
 
   mac:
     runs-on: macos-latest
