@@ -436,23 +436,24 @@ def chat_listener(config, server_validation, chat_functions):
                                     # congrats, we made it 5 minutes without dying!
                                     retry_count = 0
                                 elif len(components) == 5 and components[2] == 'PRIVMSG':
-                                    try:
-                                        tags = {k: v for k, v in [x.split('=') for x in components[0][1:].split(';')]}
-                                        badges = {k: v for k, v in [x.split('/') for x in tags['badges'].split(',')]}
-                                        timestamp = int(tags['tmi-sent-ts'])
-                                        sender = components[1][1:].split('!', maxsplit=1)[0].lower()
-                                        # display-name can be empty
-                                        sender_display = sender if not tags.get('display-name') else tags['display-name']
-                                        message = components[4][1:]
-                                        logging.info(f'{sender}: {message}')
-                                        # badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs
-                                        for func in chat_functions:
+                                    tags = {k: v for k, v in [x.split('=') for x in components[0][1:].split(';')]}
+                                    badges = {} if not tags.get('badges') else \
+                                        {k: v for k, v in [x.split('/') for x in tags['badges'].split(',')]}
+                                    timestamp = int(tags['tmi-sent-ts'])
+                                    sender = components[1][1:].split('!', maxsplit=1)[0].lower()
+                                    # display-name can be empty
+                                    sender_display = sender if not tags.get('display-name') else tags['display-name']
+                                    message = components[4][1:]
+                                    logging.info(f'{sender}: {message}')
+                                    # badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs
+                                    for func in chat_functions:
+                                        try:
                                             if func(badges, tags, timestamp, sender, sender_display, message):
                                                 break
-                                    except Exception as err:
-                                        # FIXME? this isn't a reconnect-level issue, but it's still a problem.
-                                        logging.error(f'Error in message scanner loop: {err}')
-                                        logging.error(traceback.format_exc())
+                                        except Exception as err:
+                                            # FIXME? this isn't a reconnect-level issue, but it's still a problem.
+                                            logging.error(f'Error in message scanner loop: {err}')
+                                            logging.error(traceback.format_exc())
                                 else:
                                     logging.error(f'Mystery message from twitch, probably fine: {msg}')
         except Exception as err:
@@ -535,7 +536,6 @@ def launch_system(config_file: Path, quiet: bool = False):
     # LMFAO FREAKING WINDOWS threading.Event.wait can't be interrupted https://bugs.python.org/issue35935
     # But since they've been pouring effort into time.sleep to make it not garbage, that might work.
     if platform.system() == 'Windows':
-        # WINDOWS >:C
         import time
         while not shutdown_event.is_set():
             time.sleep(5)
