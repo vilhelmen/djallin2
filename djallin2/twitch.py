@@ -473,6 +473,120 @@ def chat_listener(config, server_validation, chat_functions):
         sleep_event.wait(2*retry_count)
 
 
+def ws_rewards_test(config, server_validation):
+    import asyncio
+    import websockets
+    import json
+
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger('websockets')
+    logger.setLevel(logging.INFO)
+    logger.addHandler(logging.StreamHandler())
+
+
+    async def points_test(uri, token, channel_id):
+        async with websockets.connect(uri, max_size=4096, ssl=ssl_context) as ws:
+            await ws.send(json.dumps({
+                'type': 'LISTEN',
+                'nonce': 'asdf',
+                'data': {
+                    'topics': [f'channel-points-channel-v1.{channel_id}'],
+                    'auth_token': token
+                }
+            }))
+            print(await ws.recv())
+            print(await ws.recv())
+
+    asyncio.run(points_test('wss://pubsub-edge.twitch.tv', config['token'], server_validation['user_id']), debug=True)
+
+def ws_chat_test(config, server_validation, chat_functions):
+    import asyncio
+    import websockets
+
+    logger = logging.getLogger('websockets')
+    logger.setLevel(logging.INFO)
+    logger.addHandler(logging.StreamHandler())
+
+    creds = {
+        'host': 'irc.chat.twitch.tv',
+        'port': 6697,
+        'user': server_validation['login'],
+        'channel': '#' + server_validation['login'],
+        'oauth': 'oauth:' + config['token']
+    }
+
+    async def chat_ws_listener(chat_functions):
+        retry_count = 0
+        while retry_count < 3:
+            try:
+                async with websockets.connect('wss://irc-ws.chat.twitch.tv:443', max_size=4096, ssl=ssl_context) as ws:
+                    # Well, either we DON'T need \r\n, or twitch is nice enough to forgive us
+                    await ws.send('PASS {}\r\n'.format(creds['oauth']))
+                    await ws.send('NICK {}\r\n'.format(creds['user']))
+                    response = await ws.recv()
+                    if 'GLHF!' not in response:
+                        raise RuntimeError(f'Bad login response from twitch: {response}')
+                    await ws.send('CAP REQ :twitch.tv/tags\r\n')
+                    response = await ws.recv()
+                    if response != ':tmi.twitch.tv CAP * ACK :twitch.tv/tags\r\n':
+                        raise RuntimeError(f'Unexpected cap add response from twitch: {response}')
+                    await ws.send('JOIN {}\r\n'.format(creds['channel']))
+                    response = await ws.recv()
+                    # ok, cool. the whole "stream message boundary disambiguity" issue is not at all fixed by websockets
+                    if '.tmi.twitch.tv JOIN #' in response:
+                        if ':End of /NAMES list' not in response:
+                            response = await ws.recv()
+                            if ':End of /NAMES list' not in response:
+                                raise RuntimeError(f'Join trailer not received from twitch: {response}')
+                    else:
+                        raise RuntimeError(f'Unexpected join response from twitch: {response}')
+
+                    async for msg in ws:
+                        components = msg.split(' ', maxsplit=4)
+                        if components[0] == 'PING':
+                            # congrats, we made it 5 minutes without dying!
+                            retry_count = 0
+                            logging.info('Responding to chat ping')
+                            await ws.send('PONG')
+                        elif len(components) == 5 and components[2] == 'PRIVMSG':
+                            try:
+                                tags = {k: v for k, v in [x.split('=') for x in components[0][1:].split(';')]}
+                                badges = {} if not tags.get('badges') else \
+                                    {k: v for k, v in [x.split('/') for x in tags['badges'].split(',')]}
+                                timestamp = int(tags['tmi-sent-ts'])
+                                sender = components[1][1:].split('!', maxsplit=1)[0].lower()
+                                # display-name can be empty
+                                sender_display = sender if not tags.get('display-name') else tags['display-name']
+                                message = components[4][1:-2]
+                                logging.info(f'{sender}: {message}')
+                            except Exception as err:
+                                logging.error(f'Error parsing twitch message for listeners: {err}')
+                                logging.error(traceback.format_exc())
+                            # badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs
+                            for func in chat_functions:
+                                try:
+                                    if func(badges, tags, timestamp, sender, sender_display, message):
+                                        break
+                                except Exception as err:
+                                    # FIXME? this isn't a reconnect-level issue, but it's still a problem.
+                                    logging.error(f'Error in message scanner loop: {err}')
+                                    logging.error(traceback.format_exc())
+                        else:
+                            logging.error(f'Mystery message from twitch, probably fine: {msg}')
+
+            except Exception as err:
+                logging.error(crash_msg)
+                logging.error(f'Got {err}')
+                logging.error(traceback.format_exc())
+                retry_count += 1
+                if retry_count >= 3:
+                    logging.critical('Too many chat failures!%s', dead_msg)
+                    raise
+            await asyncio.sleep(2*retry_count)
+
+    asyncio.run(chat_ws_listener(chat_functions))
+
+
 def launch_system(config_file: Path, quiet: bool = False):
     """
     Do all the things
@@ -506,6 +620,9 @@ def launch_system(config_file: Path, quiet: bool = False):
     # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
+
+    ws_rewards_test(config, server_validation)
+    return
 
     logging.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
