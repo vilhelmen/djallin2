@@ -117,7 +117,6 @@ class SoundServer:
                 pass
 
         else:
-            # self._play_func = self._tuxplay
             raise NotImplementedError('TODO: playsound for linux is iffy. Just run the windows build in wine')
 
         def _queue_listener():

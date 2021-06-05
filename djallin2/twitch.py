@@ -20,7 +20,7 @@ import signal
 import pkg_resources
 from . import OAuth2Receiver, SoundServer, StatTracker
 
-sock_context = ssl.create_default_context()
+ssl_context = ssl.create_default_context()
 sleep_event = threading.Event()
 
 # TODO: this is gonna take ahwile to integrate
@@ -235,7 +235,12 @@ def chat_listener_factory(entry_name: str,
                 elif random_mode == 2 or (random_mode == 1 and message == 'random'):
                     request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
                 else:
-                    request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
+                    fname = message + '.mp3'
+                    selected_file = target / fname
+                    if selected_file.exists():
+                        request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, selected_file, not chaos)
+                    else:
+                        logging.error(f'{message + ".mp3"} does not exist')
         if request is not None:
             sound_server.enqueue(request)
             if stat_track:
@@ -359,7 +364,7 @@ def chat_listener(config, server_validation, chat_functions):
             #  MacOS, baby. this just keeps working if you turn the network off and on
             with socket.create_connection((creds['host'], creds['port'])) as sock:
                 sock.setblocking(True)  # The docs DON'T say it DOESN'T work on windows
-                with sock_context.wrap_socket(sock, server_hostname=creds['host']) as ssock:
+                with ssl_context.wrap_socket(sock, server_hostname=creds['host']) as ssock:
                     ssock.send('PASS {}\r\nNICK {}\r\n'.format(creds['oauth'], creds['user']).encode('utf-8'))
                     # ":tmi.twitch.tv NOTICE * :Login authentication failed" on bad oauth. idk about expired
                     # We should expect a "GLHF!" otherwise in the first response
@@ -472,6 +477,7 @@ def launch_system(config_file: Path, quiet: bool = False):
     """
     Do all the things
     :param config_file: Path to config file
+    :param quiet: silence startup boop
     """
     try:
         config = toml.loads(config_file.read_text())
