@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 
-import sqlite3
-import threading
-
-from pathlib import Path
 import logging
 import queue
+import sqlite3
+import threading
 import traceback
 import typing
+from pathlib import Path
 
 
 class StatTracker:

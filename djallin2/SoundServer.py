@@ -3,10 +3,10 @@ import logging
 import platform
 import queue
 import threading
-from pathlib import Path
-from dataclasses import dataclass, field
 import time
 import typing
+from dataclasses import dataclass, field
+from pathlib import Path
 
 
 class PlaybackException(Exception):

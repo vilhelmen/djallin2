@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 import logging
 import secrets
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
-import urllib.parse
 import typing
+import urllib.parse
 import webbrowser
-
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # TODO: add a <noscript> warning
 receiver_html = r"""
@@ -93,7 +92,8 @@ def get_oauth_code(bind_config: typing.Tuple[str, int], authorize_url: str, oaut
             if not response_recorded.is_set():
                 logging.info('Received response from browser')
                 form_resp = self.rfile.read(int(self.headers['Content-Length'], 0)).decode('utf-8')
-                parsed_resp = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.parse_qs(form_resp)['token_string'][0]).items()}
+                parsed_resp = {k: v[0] for k, v in
+                               urllib.parse.parse_qs(urllib.parse.parse_qs(form_resp)['token_string'][0]).items()}
                 # TODO: check for empty response??
                 if 'state' not in parsed_resp or parsed_resp['state'] != state:
                     self.__state_crash()

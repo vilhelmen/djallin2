@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
-import logging
 import argparse
-from pathlib import Path
-from . import twitch
+import logging
 import sys
+from pathlib import Path
+
 import pkg_resources
+
+from . import twitch
 
 logger = logging.getLogger(__name__)
 
@@ -40,4 +42,4 @@ def boot():
                         format='%(levelname)s:%(threadName)s:%(message)s')
     logger.setLevel(logging.DEBUG if args['debug'] else logging.INFO)
 
-    twitch.launch_system(args['config'], args['quiet'])
+    twitch.launch_system(args['config'], args['quiet'], args['debug'])

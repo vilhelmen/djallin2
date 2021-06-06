@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 
+import asyncio
+import copy
+import json
 import logging
 import os
 import platform
+import random
 import re
+import secrets
+import signal
 import socket
 import ssl
-import copy
 import threading
-from pathlib import Path
-import typing
-import tomlkit
-import requests
 import traceback
-import random
+import typing
+from pathlib import Path
+
 import dateutil.parser
-import toml
-import signal
 import pkg_resources
+import requests
+import toml
+import tomlkit
+import websockets
+
 from . import OAuth2Receiver, SoundServer, StatTracker
 
 ssl_context = ssl.create_default_context()
@@ -176,19 +182,37 @@ def build_listeners(listener_conf, sound_server, stat_server):
             for name, conf in sorted(listener_conf[section].items()):
                 if section == 'chat':
                     chat_functions.append(
-                        chat_listener_factory(name, sound_server, conf['stats'], stat_server, conf['badges'],
-                                              conf['names'], conf['target'], conf['target'].is_file(),
-                                              [] if conf['target'].is_file() else
-                                              [_ for _ in conf['target'].glob('*.mp3')],
-                                              conf['command'], conf['random'], conf['priority'], conf['chaos'])
-                    )
+                        chat_listener_factory({
+                            'badge_set': conf['badges'],
+                            'chaos': conf['chaos'],
+                            'command': conf['command'],
+                            'entry_name': name,
+                            'name_set': conf['names'],
+                            'priority_playback': conf['priority'],
+                            'random_mode': conf['random'],
+                            'sound_server': sound_server,
+                            'stat_server': stat_server,
+                            'stat_track': conf['stats'],
+                            'target': conf['target'],
+                            'target_file_list': [] if conf['target'].is_file() else [_ for _ in
+                                                                                     conf['target'].glob('*.mp3')],
+                            'target_is_file': conf['target'].is_file(),
+                        }))
                 elif section == 'points':
                     points_functions[conf['name']] = \
-                        points_listener_factory(name, sound_server, conf['stats'], stat_server, conf['target'],
-                                                conf['target'].is_file(),
-                                                [] if conf['target'].is_file() else
-                                                [_ for _ in conf['target'].glob('*.mp3')],
-                                                conf['random'], conf['priority'], conf['chaos'])
+                        points_listener_factory({
+                            'chaos': conf['chaos'],
+                            'entry_name': name,
+                            'priority_playback': conf['priority'],
+                            'random_mode': conf['random'],
+                            'sound_server': sound_server,
+                            'stat_server': stat_server,
+                            'stat_track': conf['stats'],
+                            'target': conf['target'],
+                            'target_file_list': [] if conf['target'].is_file() else [_ for _ in
+                                                                                     conf['target'].glob('*.mp3')],
+                            'target_is_file': conf['target'].is_file(),
+                        })
                 else:
                     raise RuntimeError(f'Error building listeners, no known section {section}')
     except Exception as err:
@@ -202,87 +226,101 @@ def build_listeners(listener_conf, sound_server, stat_server):
 message_filter = re.compile(r'\W')
 
 
-def chat_listener_factory(entry_name: str,
-                          sound_server: SoundServer.SoundServer,
-                          stat_track: bool,
-                          stat_server: StatTracker.StatTracker,
-                          badge_set: set,
-                          name_set: set,
-                          target: Path,
-                          target_is_file: bool,
-                          target_file_list: list,
-                          command: str,
-                          random_mode: int,
-                          priority_playback: bool,
-                          chaos: bool) -> typing.Callable[[dict, dict, int, str, str, str], bool]:
-    def listener(badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs) -> bool:
+def do_sound_req(*, chaos: bool, entry_name: str, message: str, priority_playback: bool, random_mode: int,
+                 sound_server: SoundServer.SoundServer, stat_server: StatTracker.StatTracker,
+                 stat_track: bool, target: Path, target_file_list: list, target_is_file: bool, timestamp: int,
+                 user: str, **kwargs):
+    request = None
+    # We could switch to if len(list) == 1 but that would technically clobber a directory with one file
+    if target_is_file:
+        request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp,
+                                           target, not chaos)
+    elif random_mode == 2 or (random_mode == 1 and message == 'random'):
+        request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp,
+                                           random.choice(target_file_list), not chaos)
+    else:
+        fname = message + '.mp3'
+        selected_file = target / fname
+        if selected_file.exists():
+            request = SoundServer.SoundRequest(50 if priority_playback else 100,
+                                               timestamp, selected_file, not chaos)
+        else:
+            logging.error(f'{fname} does not exist')
+    if request is not None:
+        sound_server.enqueue(request)
+        if stat_track:
+            stat_server.submit('chat', user, entry_name, timestamp, message)
+        return True
+    return False
+
+
+def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
+    """
+    Build chat listener
+    :param config:
+        entry_name: str,
+        sound_server: SoundServer.SoundServer,
+        stat_track: bool,
+        stat_server: StatTracker.StatTracker,
+        badge_set: set,
+        name_set: set,
+        target: Path,
+        target_is_file: bool,
+        target_file_list: list,
+        command: str,
+        random_mode: int,
+        priority_playback: bool,
+        chaos: bool
+    :return: chat listener function
+    """
+    def listener(*, badges: dict, tags: dict, timestamp: int, user: str, user_display: str, message: str, **kwargs) -> bool:
         """
         Checks various filters against the request and queues a sound.
         :param badges: User badge map. badge (str): version (str)
         :param tags: Twitch message tags. tag (str): value (str)
         :param timestamp: Message timestamp (ms)
-        :param sender: Username of the message sender, lowercase
-        :param sender_display: User's display name
+        :param user: Username of the message sender, lowercase
+        :param user_display: User's display name
         :param message: Chat message - !!NOT SANITIZED!!
         :return: bool indicating if it fired. Stops processing listeners if True
         """
-        request = None
-        if message.startswith(command):
-            if (not badge_set and not name_set) or badges.keys() & badge_set or sender in name_set:
-                message = message_filter.sub('', message[len(command):]).lower()
-                if target_is_file:
-                    request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target, not chaos)
-                elif random_mode == 2 or (random_mode == 1 and message == 'random'):
-                    request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
-                else:
-                    fname = message + '.mp3'
-                    selected_file = target / fname
-                    if selected_file.exists():
-                        request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, selected_file, not chaos)
-                    else:
-                        logging.error(f'{message + ".mp3"} does not exist')
-        if request is not None:
-            sound_server.enqueue(request)
-            if stat_track:
-                stat_server.submit('chat', sender, entry_name, timestamp, message)
-            return True
-        return False
+        if message.startswith(config['command']):
+            if (not config['badge_set'] and not config['name_set']) \
+                    or badges.keys() & config['badge_set'] \
+                    or user in config['name_set']:
+                message = message_filter.sub('', message[len(config['command']):]).lower()
+                return do_sound_req(**config, user=user, message=message, timestamp=timestamp)
     return listener
 
 
-def points_listener_factory(entry_name: str,
-                            sound_server: SoundServer.SoundServer,
-                            stat_track: bool,
-                            stat_server: StatTracker.StatTracker,
-                            target: Path,
-                            target_is_file: bool,
-                            target_file_list: list,
-                            random_mode: int,
-                            priority_playback: bool,
-                            chaos: bool) -> typing.Callable[[dict, str, dict, str], None]:
-    def listener(user: dict, redeemed_at: str, reward: dict, user_input: typing.Optional[str] = None, **kwargs) -> None:
+def points_listener_factory(config: dict) -> typing.Callable[..., None]:
+    """
+    Build points responder
+    :param config:
+        entry_name: str,
+        sound_server: SoundServer.SoundServer,
+        stat_track: bool,
+        stat_server: StatTracker.StatTracker,
+        target: Path,
+        target_is_file: bool,
+        target_file_list: list,
+        random_mode: int,
+        priority_playback: bool,
+        chaos: bool
+    :return: Points responder
+    """
+    def listener(user: str, user_display: str, timestamp: int, reward: dict, message: typing.Optional[str], **kwargs) -> None:
         """
         Reads a points redemption and does whatever it needs to do
-        :param user: user data, str: str map. id, login, display_name
-        :param redeemed_at: 8601 timestamp string
-        :param reward: lots of data, check the twitch api docs https://dev.twitch.tv/docs/pubsub#example-channel-points-event-message
-        :param user_input: Data from the user, if applicable
-        :param kwargs:
-        :return: n/a
+        :param user: Username of the sender, lowercase
+        :param user_display: User's display name
+        :param timestamp: Message timestamp (ms)
+        :param message: Reward input or None - !!NOT SANITIZED!!
+        :param reward: Redemption data from twitch - https://dev.twitch.tv/docs/pubsub#example-channel-points-event-message
+        :return: None
         """
-        request = None
-        timestamp = int(dateutil.parser.parse('2019-12-11T18:52:53.128421623Z').timestamp() * 1000)
-        message = message_filter.sub('', user_input) if user_input else ''
-        if target_is_file:
-            request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target, not chaos)
-        elif random_mode == 2 or (random_mode == 1 and message == 'random'):
-            request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, random.choice(target_file_list), not chaos)
-        else:
-            request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp, target / (message + '.mp3'), not chaos)
-        if request is not None:
-            sound_server.enqueue(request)
-            if stat_track:
-                stat_server.submit('chat', sender, entry_name, timestamp, message)
+        message = message_filter.sub('', message) if message else ''
+        do_sound_req(**config, user=user, message=message, timestamp=timestamp)
     return listener
 
 
@@ -344,14 +382,6 @@ def do_token_work(config_file: Path):
 
 
 def chat_listener(config, server_validation, chat_functions):
-    creds = {
-        'host': 'irc.chat.twitch.tv',
-        'port': 6697,
-        'user': server_validation['login'],
-        'channel': '#' + server_validation['login'],
-        'oauth': 'oauth:' + config['token']
-    }
-
     retry_count = 0
     while True:
         message_buffer = []
@@ -362,10 +392,11 @@ def chat_listener(config, server_validation, chat_functions):
             #  I don't like that the websocket library has an FAQ section for "why is it slow"
             # Need to see what a network disconnect looks like
             #  MacOS, baby. this just keeps working if you turn the network off and on
-            with socket.create_connection((creds['host'], creds['port'])) as sock:
+            with socket.create_connection(('irc.chat.twitch.tv', 6697)) as sock:
                 sock.setblocking(True)  # The docs DON'T say it DOESN'T work on windows
-                with ssl_context.wrap_socket(sock, server_hostname=creds['host']) as ssock:
-                    ssock.send('PASS {}\r\nNICK {}\r\n'.format(creds['oauth'], creds['user']).encode('utf-8'))
+                with ssl_context.wrap_socket(sock, server_hostname='irc.chat.twitch.tv') as ssock:
+                    ssock.send('PASS oauth:{}\r\nNICK {}\r\n'.format(config['token'],
+                                                                     server_validation['login']).encode('utf-8'))
                     # ":tmi.twitch.tv NOTICE * :Login authentication failed" on bad oauth. idk about expired
                     # We should expect a "GLHF!" otherwise in the first response
                     sleep_event.wait(0.2)
@@ -383,7 +414,7 @@ def chat_listener(config, server_validation, chat_functions):
                         logging.critical(err_str)
                         raise RuntimeError(err_str)
 
-                    ssock.send('JOIN {}\r\n'.format(creds['channel']).encode('utf-8'))
+                    ssock.send('JOIN #{}\r\n'.format(server_validation['login']).encode('utf-8'))
                     sleep_event.wait(0.2)
                     join_status = ssock.recv(512)
                     if b'.tmi.twitch.tv JOIN #' not in join_status:
@@ -453,7 +484,12 @@ def chat_listener(config, server_validation, chat_functions):
                                     # badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs
                                     for func in chat_functions:
                                         try:
-                                            if func(badges, tags, timestamp, sender, sender_display, message):
+                                            if func(badges=badges,
+                                                    tags=tags,
+                                                    timestamp=timestamp,
+                                                    user=sender,
+                                                    user_display=sender_display,
+                                                    message=message):
                                                 break
                                         except Exception as err:
                                             # FIXME? this isn't a reconnect-level issue, but it's still a problem.
@@ -469,129 +505,169 @@ def chat_listener(config, server_validation, chat_functions):
             retry_count += 1
             if retry_count >= 3:
                 logging.critical('Too many chat failures!%s', dead_msg)
-                raise
-        sleep_event.wait(2*retry_count)
+                raise RuntimeError('Too many chat failures') from err
+        sleep_event.wait(2**retry_count)
 
 
-def ws_rewards_test(config, server_validation):
-    import asyncio
-    import websockets
-    import json
-
-    logging.basicConfig(level=logging.DEBUG)
-    logger = logging.getLogger('websockets')
-    logger.setLevel(logging.INFO)
-    logger.addHandler(logging.StreamHandler())
+async def points_ws_send_ping_in(time, wsock):
+    await asyncio.sleep(time)
+    if wsock.open:
+        await wsock.send('{"type":"PING"}')
 
 
-    async def points_test(uri, token, channel_id):
-        async with websockets.connect(uri, max_size=4096, ssl=ssl_context) as ws:
-            await ws.send(json.dumps({
-                'type': 'LISTEN',
-                'nonce': 'asdf',
-                'data': {
-                    'topics': [f'channel-points-channel-v1.{channel_id}'],
-                    'auth_token': token
-                }
-            }))
-            print(await ws.recv())
-            print(await ws.recv())
+async def points_ws_reward_handler(message):
+    pass
 
-    asyncio.run(points_test('wss://pubsub-edge.twitch.tv', config['token'], server_validation['user_id']), debug=True)
 
-def ws_chat_test(config, server_validation, chat_functions):
-    import asyncio
-    import websockets
-
-    logger = logging.getLogger('websockets')
-    logger.setLevel(logging.INFO)
-    logger.addHandler(logging.StreamHandler())
-
-    creds = {
-        'host': 'irc.chat.twitch.tv',
-        'port': 6697,
-        'user': server_validation['login'],
-        'channel': '#' + server_validation['login'],
-        'oauth': 'oauth:' + config['token']
-    }
-
-    async def chat_ws_listener(chat_functions):
-        retry_count = 0
-        while retry_count < 3:
-            try:
-                async with websockets.connect('wss://irc-ws.chat.twitch.tv:443', max_size=4096, ssl=ssl_context) as ws:
-                    # Well, either we DON'T need \r\n, or twitch is nice enough to forgive us
-                    await ws.send('PASS {}\r\n'.format(creds['oauth']))
-                    await ws.send('NICK {}\r\n'.format(creds['user']))
-                    response = await ws.recv()
-                    if 'GLHF!' not in response:
-                        raise RuntimeError(f'Bad login response from twitch: {response}')
-                    await ws.send('CAP REQ :twitch.tv/tags\r\n')
-                    response = await ws.recv()
-                    if response != ':tmi.twitch.tv CAP * ACK :twitch.tv/tags\r\n':
-                        raise RuntimeError(f'Unexpected cap add response from twitch: {response}')
-                    await ws.send('JOIN {}\r\n'.format(creds['channel']))
-                    response = await ws.recv()
-                    # ok, cool. the whole "stream message boundary disambiguity" issue is not at all fixed by websockets
-                    if '.tmi.twitch.tv JOIN #' in response:
-                        if ':End of /NAMES list' not in response:
-                            response = await ws.recv()
-                            if ':End of /NAMES list' not in response:
-                                raise RuntimeError(f'Join trailer not received from twitch: {response}')
+async def points_ws_listener(config, server_validation, points_functions):
+    retry_count = 0
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            async with websockets.connect('wss://pubsub-edge.twitch.tv', max_size=4096, ssl=ssl_context) as ws:
+                nonce = secrets.token_urlsafe(16)
+                await ws.send(json.dumps(
+                    {'type': 'LISTEN',
+                     'nonce': nonce,
+                     'data': {
+                         'topics': [f'channel-points-channel-v1.{server_validation["user_id"]}'],
+                         'auth_token': config['token']
+                     }}))
+                response = json.loads(await ws.recv())
+                if response['type'] == "RESPONSE":
+                    if response['error']:
+                        raise RuntimeError(f'LISTEN failed, twitch says: {response["error"]}')
+                    if response.get('nonce') != nonce:
+                        raise RuntimeError(f'LISTEN NONCE BAD: {response.get("nonce")} CONNECTION INTERFERENCE!?')
+                # Well I guess that's it.
+                # !WE! have to ping !TWITCH! which is weird
+                # AND they're not websocket pings, so I can't use the helpers >:C
+                loop.create_task(points_ws_send_ping_in(260 + random.randrange(-20, 20), ws))
+                #loop.create_task(points_ws_send_ping_in(5, ws))
+                # I could do something fancy if there was a dispatch here and every redemption went to a new task
+                # FIXME: we never check for PONG arrival within 10 seconds??
+                logging.info('Connected to PubSub')
+                async for msg in ws:
+                    # If we got sent bad json, idk what to tell you.
+                    # I mean, a nicer error message would be cool but ehhhh
+                    await ws.close()
+                    msg = json.loads(msg)
+                    if msg.get('type') == 'reward-redeemed':
+                        try:
+                            redemption = msg['data']['redemption']
+                            username = redemption['user']['login']
+                            display_name = redemption['user'].get('display_name', username)
+                            timestamp = int(dateutil.parser.parse(msg['data']['timestamp']).timestamp() * 1000)
+                            what = redemption['reward']['title'].strip()
+                            logging.info(f'{display_name} redeemed "{what}"')
+                            if what in points_functions:
+                                points_functions['what'](user=username,
+                                                         user_display=display_name,
+                                                         timestamp=timestamp,
+                                                         reward=redemption,
+                                                         message=redemption.get('user_input'))
+                            else:
+                                logging.error('But there is no function for it')
+                        except Exception as err:
+                            logging.error(f'Error in points redemption: {err}')
+                            logging.error(traceback.format_exc())
+                    elif msg.get('type') == 'PONG':
+                        # Cool, got a ping response.
+                        logging.info('Got PubSub PONG')
+                        loop.create_task(points_ws_send_ping_in(260 + random.randrange(-20, 20), ws))
+                    elif msg.get('type') == 'RECONNECT':
+                        # Idk if there were messages in the queue or what will happen
+                        logging.info('Twitch asked us to hangup')
+                        retry_count += 1
+                        await ws.close()
                     else:
-                        raise RuntimeError(f'Unexpected join response from twitch: {response}')
+                        logging.error(f'Unrecognized PubSub from twitch: {msg}')
+        except Exception as err:
+            logging.error(crash_msg)
+            logging.error(f'Got {err}')
+            logging.error(traceback.format_exc())
+            retry_count += 1
+            if retry_count >= 3:
+                raise RuntimeError('Too many points failures') from err
+        await asyncio.sleep(2**retry_count)
 
-                    async for msg in ws:
-                        components = msg.split(' ', maxsplit=4)
-                        if components[0] == 'PING':
-                            # congrats, we made it 5 minutes without dying!
-                            retry_count = 0
-                            logging.info('Responding to chat ping')
-                            await ws.send('PONG')
-                        elif len(components) == 5 and components[2] == 'PRIVMSG':
+
+async def chat_ws_listener(login_username, oauth_token, chat_functions):
+    retry_count = 0
+    while retry_count <= 3:
+        try:
+            async with websockets.connect('wss://irc-ws.chat.twitch.tv:443', max_size=4096, ssl=ssl_context) as ws:
+                # Well, either we DON'T need \r\n, or twitch is nice enough to forgive us
+                await ws.send(f'PASS oauth:{oauth_token}\r\n')
+                await ws.send(f'NICK {login_username}\r\n')
+                response = await ws.recv()
+                if 'GLHF!' not in response:
+                    raise RuntimeError(f'Bad login response from twitch: {response}')
+                await ws.send('CAP REQ :twitch.tv/tags\r\n')
+                response = await ws.recv()
+                if response != ':tmi.twitch.tv CAP * ACK :twitch.tv/tags\r\n':
+                    raise RuntimeError(f'Unexpected cap add response from twitch: {response}')
+                await ws.send(f'JOIN #{login_username}\r\n')
+                response = await ws.recv()
+                # ok, cool. the whole "stream message boundary disambiguity" issue is not at all fixed by websockets
+                if '.tmi.twitch.tv JOIN #' in response:
+                    if ':End of /NAMES list' not in response:
+                        response = await ws.recv()
+                        if ':End of /NAMES list' not in response:
+                            raise RuntimeError(f'Join trailer not received from twitch: {response}')
+                else:
+                    raise RuntimeError(f'Unexpected join response from twitch: {response}')
+
+                async for msg in ws:
+                    components = msg.split(' ', maxsplit=4)
+                    if components[0] == 'PING':
+                        # congrats, we made it 5 minutes without dying!
+                        retry_count = 0
+                        logging.info('Responding to chat ping')
+                        await ws.send('PONG')
+                    elif len(components) == 5 and components[2] == 'PRIVMSG':
+                        try:
+                            tags = {k: v for k, v in [x.split('=') for x in components[0][1:].split(';')]}
+                            badges = {} if not tags.get('badges') else \
+                                {k: v for k, v in [x.split('/') for x in tags['badges'].split(',')]}
+                            timestamp = int(tags['tmi-sent-ts'])
+                            sender = components[1][1:].split('!', maxsplit=1)[0].lower()
+                            # display-name can be empty
+                            sender_display = sender if not tags.get('display-name') else tags['display-name']
+                            message = components[4][1:-2]
+                            logging.info(f'{sender}: {message}')
+                        except Exception as err:
+                            logging.error(f'Error parsing twitch message for listeners: {err}')
+                            logging.error(traceback.format_exc())
+                        # badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs
+                        for func in chat_functions:
                             try:
-                                tags = {k: v for k, v in [x.split('=') for x in components[0][1:].split(';')]}
-                                badges = {} if not tags.get('badges') else \
-                                    {k: v for k, v in [x.split('/') for x in tags['badges'].split(',')]}
-                                timestamp = int(tags['tmi-sent-ts'])
-                                sender = components[1][1:].split('!', maxsplit=1)[0].lower()
-                                # display-name can be empty
-                                sender_display = sender if not tags.get('display-name') else tags['display-name']
-                                message = components[4][1:-2]
-                                logging.info(f'{sender}: {message}')
+                                if func(badges, tags, timestamp, sender, sender_display, message):
+                                    break
                             except Exception as err:
-                                logging.error(f'Error parsing twitch message for listeners: {err}')
+                                # FIXME? this isn't a reconnect-level issue, but it's still a problem.
+                                logging.error(f'Error in message scanner loop: {err}')
                                 logging.error(traceback.format_exc())
-                            # badges: dict, tags: dict, timestamp: int, sender: str, sender_display: str, message: str, **kwargs
-                            for func in chat_functions:
-                                try:
-                                    if func(badges, tags, timestamp, sender, sender_display, message):
-                                        break
-                                except Exception as err:
-                                    # FIXME? this isn't a reconnect-level issue, but it's still a problem.
-                                    logging.error(f'Error in message scanner loop: {err}')
-                                    logging.error(traceback.format_exc())
-                        else:
-                            logging.error(f'Mystery message from twitch, probably fine: {msg}')
+                    else:
+                        logging.error(f'Mystery message from twitch, probably fine: {msg}')
 
-            except Exception as err:
-                logging.error(crash_msg)
-                logging.error(f'Got {err}')
-                logging.error(traceback.format_exc())
-                retry_count += 1
-                if retry_count >= 3:
-                    logging.critical('Too many chat failures!%s', dead_msg)
-                    raise
-            await asyncio.sleep(2*retry_count)
-
-    asyncio.run(chat_ws_listener(chat_functions))
+        except Exception as err:
+            logging.error(crash_msg)
+            logging.error(f'Got {err}')
+            logging.error(traceback.format_exc())
+            retry_count += 1
+            if retry_count >= 3:
+                logging.critical('Too many chat failures!%s', dead_msg)
+                raise
+        await asyncio.sleep(2**retry_count)
 
 
-def launch_system(config_file: Path, quiet: bool = False):
+def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     """
     Do all the things
     :param config_file: Path to config file
     :param quiet: silence startup boop
+    :param debug: debug flag
     """
     try:
         config = toml.loads(config_file.read_text())
@@ -621,8 +697,6 @@ def launch_system(config_file: Path, quiet: bool = False):
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
-    ws_rewards_test(config, server_validation)
-    return
 
     logging.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
@@ -644,11 +718,22 @@ def launch_system(config_file: Path, quiet: bool = False):
     if chat_functions:
         # daemonize because I can't think of a nice way to integrate shutdown yet
         chat_thread = threading.Thread(target=chat_listener, args=(config, server_validation, chat_functions),
-                                       name='chat_listener', daemon=True)
+                                       name='chat', daemon=True)
         chat_thread.start()
 
-    if points_thread:
-        logging.critical('Lol no points')
+    if points_functions:
+        # I'm feeling the async creep. It'd be nice to convert the chat, sound, and stat systems to async
+        # We're under the GIL so if anything we'd benefit from context switch reduction.
+        # But that means user defined funcs will need to be async, and if they screw it up, it'll jam *everything*
+        # Maybe we should scrap user funcs?
+        # Could use different event loop threads, but then what was the point.
+        #  Sound and stats could share a loop! But how do you properly flush stats on shutdown?
+        # I should focus on getting point rewards working first.
+        points_thread = threading.Thread(target=asyncio.run,
+                                         args=(points_ws_listener(config, server_validation, points_functions),),
+                                         kwargs={'debug': debug},
+                                         name='points', daemon=True)
+        points_thread.start()
 
     if not chat_functions and not points_functions:
         logging.critical('Nothing configured??')
