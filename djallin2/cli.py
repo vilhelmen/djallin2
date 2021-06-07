@@ -3,6 +3,7 @@
 import argparse
 import logging
 import sys
+import traceback
 from pathlib import Path
 
 import pkg_resources
@@ -36,10 +37,18 @@ def boot():
     # Just for reference for now
     bundled = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
 
-    args = run_argparse()
+    try:
+        args = run_argparse()
 
-    logging.basicConfig(level=logging.DEBUG if args['debug'] else logging.INFO,
-                        format='%(levelname)s:%(threadName)s:%(message)s')
-    logger.setLevel(logging.DEBUG if args['debug'] else logging.INFO)
+        logging.basicConfig(level=logging.DEBUG if args['debug'] else logging.INFO,
+                            format='%(levelname)s:%(threadName)s:%(message)s')
+        logger.setLevel(logging.DEBUG if args['debug'] else logging.INFO)
 
-    twitch.launch_system(args['config'], args['quiet'], args['debug'], bundled)
+        twitch.launch_system(args['config'], args['quiet'], args['debug'])
+    except Exception as err:
+        if bundled:
+            logging.critical(twitch.dead_msg)
+            traceback.format_exc()
+            input('Press enter to exit...')
+        else:
+            raise
