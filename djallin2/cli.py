@@ -42,4 +42,4 @@ def boot():
                         format='%(levelname)s:%(threadName)s:%(message)s')
     logger.setLevel(logging.DEBUG if args['debug'] else logging.INFO)
 
-    twitch.launch_system(args['config'], args['quiet'], args['debug'])
+    twitch.launch_system(args['config'], args['quiet'], args['debug'], bundled)

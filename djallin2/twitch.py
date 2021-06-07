@@ -149,6 +149,7 @@ def build_and_validate_listener_conf(config):
         }
     }
     try:
+        # Fixme: this needs to be verbose
         for section in listener_conf.keys():
             for name, conf in listener_conf[section].items():
                 for k, t in key_types[section].items():
@@ -662,7 +663,7 @@ async def chat_ws_listener(login_username, oauth_token, chat_functions):
         await asyncio.sleep(2**retry_count)
 
 
-def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
+def launch_system(config_file: Path, quiet: bool = False, debug: bool = False, bundled: bool = False):
     """
     Do all the things
     :param config_file: Path to config file
@@ -675,84 +676,93 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
         logging.critical('Error loading configuration file: %s', err)
         raise
 
-    # ugh we said paths would be relative to the conf file
-    # We might as well chdir, this means we aren't logging/saving abspaths everywhere
-    os.chdir(config_file.absolute().parent)
+    try:
+        # ugh we said paths would be relative to the conf file
+        # We might as well chdir, this means we aren't logging/saving abspaths everywhere
+        os.chdir(config_file.absolute().parent)
 
-    logging.debug('Checking config')
-    listener_conf = build_and_validate_listener_conf(copy.deepcopy(config))
+        logging.debug('Checking config')
+        listener_conf = build_and_validate_listener_conf(copy.deepcopy(config))
 
-    logging.debug(listener_conf)
+        logging.debug(listener_conf)
 
-    logging.debug('Doing token stuff')
-    config['token'], server_validation = do_token_work(config_file)
+        logging.debug('Doing token stuff')
+        config['token'], server_validation = do_token_work(config_file)
 
-    logging.debug('Attaching signal handlers')
+        logging.debug('Attaching signal handlers')
 
-    def handler(signum, frame):
-        logging.critical(f'SIG{signum}: shutting down')
-        shutdown_event.set()
+        def handler(signum, frame):
+            logging.critical(f'SIG{signum}: shutting down')
+            shutdown_event.set()
 
-    # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
-    signal.signal(signal.SIGINT, handler)
-    signal.signal(signal.SIGTERM, handler)
+        # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
+        signal.signal(signal.SIGINT, handler)
+        signal.signal(signal.SIGTERM, handler)
 
 
-    logging.debug('Starting sound server')
-    soundserver = SoundServer.SoundServer(shutdown_event)
+        logging.debug('Starting sound server')
+        soundserver = SoundServer.SoundServer(shutdown_event)
 
-    if not quiet:
-        soundserver.enqueue(SoundServer.SoundRequest(
-            0, 0, Path(pkg_resources.resource_filename(__package__, 'internal/up.mp3')), False))
+        if not quiet:
+            soundserver.enqueue(SoundServer.SoundRequest(
+                0, 0, Path(pkg_resources.resource_filename(__package__, 'internal/up.mp3')), False))
 
-    logging.debug('Booting stats server')
-    # uhhhhhhh base the name on the config... somehow? Generate one and write back?
-    disable_stats = not any(conf['stats'] for section in listener_conf.values() for conf in section.values())
-    statserver = StatTracker.StatTracker(Path(config.get('stats_db', 'stats.sqlite')), shutdown_event, disable_stats)
+        logging.debug('Booting stats server')
+        # uhhhhhhh base the name on the config... somehow? Generate one and write back?
+        disable_stats = not any(conf['stats'] for section in listener_conf.values() for conf in section.values())
+        statserver = StatTracker.StatTracker(Path(config.get('stats_db', 'stats.sqlite')), shutdown_event, disable_stats)
 
-    chat_functions, points_functions = build_listeners(listener_conf, soundserver, statserver)
+        chat_functions, points_functions = build_listeners(listener_conf, soundserver, statserver)
 
-    chat_thread = None
-    points_thread = None
+        chat_thread = None
+        points_thread = None
 
-    if chat_functions:
-        # daemonize because I can't think of a nice way to integrate shutdown yet
-        chat_thread = threading.Thread(target=chat_listener, args=(config, server_validation, chat_functions),
-                                       name='chat', daemon=True)
-        chat_thread.start()
+        if chat_functions:
+            # daemonize because I can't think of a nice way to integrate shutdown yet
+            chat_thread = threading.Thread(target=chat_listener, args=(config, server_validation, chat_functions),
+                                           name='chat', daemon=True)
+            chat_thread.start()
 
-    if points_functions:
-        # I'm feeling the async creep. It'd be nice to convert the chat, sound, and stat systems to async
-        # We're under the GIL so if anything we'd benefit from context switch reduction.
-        # But that means user defined funcs will need to be async, and if they screw it up, it'll jam *everything*
-        # Maybe we should scrap user funcs?
-        # Could use different event loop threads, but then what was the point.
-        #  Sound and stats could share a loop! But how do you properly flush stats on shutdown?
-        # I should focus on getting point rewards working first.
-        points_thread = threading.Thread(target=asyncio.run,
-                                         args=(points_ws_listener(config, server_validation, points_functions),),
-                                         kwargs={'debug': debug},
-                                         name='points', daemon=True)
-        points_thread.start()
+        if points_functions:
+            # I'm feeling the async creep. It'd be nice to convert the chat, sound, and stat systems to async
+            # We're under the GIL so if anything we'd benefit from context switch reduction.
+            # But that means user defined funcs will need to be async, and if they screw it up, it'll jam *everything*
+            # Maybe we should scrap user funcs?
+            # Could use different event loop threads, but then what was the point.
+            #  Sound and stats could share a loop! But how do you properly flush stats on shutdown?
+            # I should focus on getting point rewards working first.
+            points_thread = threading.Thread(target=asyncio.run,
+                                             args=(points_ws_listener(config, server_validation, points_functions),),
+                                             kwargs={'debug': debug},
+                                             name='points', daemon=True)
+            points_thread.start()
 
-    if not chat_functions and not points_functions:
-        logging.critical('Nothing configured??')
-        shutdown_event.set()
+        if not chat_functions and not points_functions:
+            logging.critical('Nothing configured??')
+            shutdown_event.set()
 
-    # TODO: Figure out shutdowns in the various bad spots
-    #  (soundserver needing a fake(?) sound, chat listener, (eventually) points listnener)
-    # LMFAO FREAKING WINDOWS threading.Event.wait can't be interrupted https://bugs.python.org/issue35935
-    # But since they've been pouring effort into time.sleep to make it not garbage, that might work.
-    if platform.system() == 'Windows':
-        import time
-        while not shutdown_event.is_set():
-            time.sleep(5)
-    else:
-        shutdown_event.wait()
+        # TODO: Figure out shutdowns in the various bad spots
+        #  (soundserver needing a fake(?) sound, chat listener, (eventually) points listnener)
+        # LMFAO FREAKING WINDOWS threading.Event.wait can't be interrupted https://bugs.python.org/issue35935
+        # But since they've been pouring effort into time.sleep to make it not garbage, that might work.
+        if platform.system() == 'Windows':
+            import time
+            while not shutdown_event.is_set():
+                time.sleep(5)
+        else:
+            shutdown_event.wait()
 
-    if not quiet:
-        soundserver.enqueue(SoundServer.SoundRequest(
-            -1, -1, Path(pkg_resources.resource_filename(__package__, 'internal/down.mp3')), False))
+        if not quiet:
+            soundserver.enqueue(SoundServer.SoundRequest(
+                -1, -1, Path(pkg_resources.resource_filename(__package__, 'internal/down.mp3')), False))
+
+    except Exception as err:
+        if bundled:
+            logging.critical(dead_msg)
+            traceback.format_exc()
+            input('Press enter to exit...')
+        else:
+            raise
 
     # So here's the deal. If we raise and we're in windows, the terminal window's probably gonna close immediately
     # so we probably need to wrap this all in a try and if platforms == 'Windows' time.sleep(10) or something
