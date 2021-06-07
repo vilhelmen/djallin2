@@ -149,19 +149,24 @@ def build_and_validate_listener_conf(config):
         }
     }
     try:
-        # Fixme: this needs to be verbose
         for section in listener_conf.keys():
             for name, conf in listener_conf[section].items():
                 for k, t in key_types[section].items():
                     if k in conf:
-                        assert isinstance(conf[k], t)
+                        if not isinstance(conf[k], t):
+                            msg = f'Expected {k} in {section}.{name} to be {t} but got {type(conf[k])}'
+                            logging.critical(msg)
+                            raise RuntimeError(msg)
                 # Types look good, do any formatting
                 if section == 'chat':
                     conf['names'] = set(conf.get('names', []))
                     conf['badges'] = set(conf.get('badges', []))
                 conf['target'] = Path(conf['target'])
                 # I guess we should raise if it's missing
-                assert conf['target'].exists()
+                if not conf['target'].exists():
+                    msg = f'Error in {section}.{name}, target {conf["target"]} does not exist'
+                    logging.critical(msg)
+                    raise RuntimeError(msg)
                 conf['random'] = conf.get('random', 0)
                 conf['stats'] = conf.get('stats', False)
                 conf['chaos'] = conf.get('chaos', False)
