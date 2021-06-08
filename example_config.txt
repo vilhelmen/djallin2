@@ -19,11 +19,19 @@ stats_db = "stats.sqlite"
     names = ["vilhel"]
     badges = ["moderator", "broadcaster"]
     # What command triggers playback. Must be at the start of a message.
-    # You probably want a space on the end to prevent command confusion
+    # "" will check every message for a file match.
+    # You probably want a space on the end to prevent command confusion.
     #  Directory playback will sanitize the remainder of the message, append .mp3, and search for that file
     #  Single file playback will ignore the user message and play the target mp3
-    #  See below for random playback settings
+    #  See below for random playback settings and command modes
     command = "!sound "
+    # How the command is searched for
+    #  "start" (default) means the specified command must be at the start of the message
+    #  "contains" means it has to be in the message somewhere.
+    #    It will most likely get confused easily. Only supports single playback or random 2
+    #  "regex" means you know what you're doing and the command string is regex.
+    #    TOML string literal is single quotes. A capture group, if it exists, will be used as the sound name.
+    command_mode = "start"
     # What will be played when triggered. Relative paths are relative to this config file.
     #  A directory will be searched as described above
     #  A single mp3 will play regardless of the message
@@ -32,7 +40,7 @@ stats_db = "stats.sqlite"
     #  1 will enable the "random" command, which will play a random sound in the target director
     #    "random.mp3" can only be triggered by random selection if it exists
     #  2 will ignore user input and always select a random sound in the target directory
-    #  Anything else will disable random playback
+    #  Anything else will disable random playback (default)
     random = 1
     # Priority playback means the sound will jump to the front of the playback queue
     #  Priority sounds will be sorted by their arrival time

@@ -18,3 +18,4 @@ Take a look at the [example configuration](./example_config.txt) for an explanat
 1. more flexible command triggers (regex??)
 1. Bits?
 1. Does linux support audio these days?
+1. https://inloop.github.io/sqlite-viewer/
