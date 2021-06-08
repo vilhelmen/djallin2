@@ -53,6 +53,13 @@ stats_db = "stats.sqlite"
     random = 2
     target = "./wisdom/"
 
+[chat.zz_cowboy]
+    command = "cowboy"
+    command_mode = "contains"
+    random = 2
+    target = "./yeehaw/"
+    priority = true
+
 # points.NAME will define a point redemption listener
 [points.sound]
     # Point redemption name
