@@ -303,8 +303,15 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
     :return: chat listener function
     """
     if config['custom']:
-        # WTF, exec works when I run it manually in the debugger but not otherwise
-        exec(config['custom'])
+        # WOW galaxy brain problem.
+        # You need to expose a scope object or the function disappears (but not in the debugger!!)
+        # Short version, writes to the default locals() get tossed by the interpreter
+        # AND you need to expose the config as a global because FOR SOME REASON
+        # the local variables won't be available to functions in the exec block at call time??
+        # https://stackoverflow.com/a/24734880
+        locals = {}
+        exec(config['custom'], {'config': config}, locals)
+        return locals['listener']
     else:
         def listener(*, badges: dict, tags: dict, timestamp: int, user: str, user_display: str, message: str, **kwargs) -> bool:
             """
@@ -336,8 +343,7 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
                     return do_sound_req(**config, user=user,
                                         message=match.groups()[0] if match.groups() else '__regex_no_capture',
                                         timestamp=timestamp)
-
-    return listener
+        return listener
 
 
 def points_listener_factory(config: dict) -> typing.Callable[..., None]:
@@ -358,7 +364,9 @@ def points_listener_factory(config: dict) -> typing.Callable[..., None]:
     :return: Points responder
     """
     if config['custom']:
-        exec(config['custom'], config)
+        locals = {}
+        exec(config['custom'], {'config': config}, locals)
+        return locals['listener']
     else:
         def listener(user: str, user_display: str, timestamp: int, reward: dict, message: typing.Optional[str], **kwargs) -> None:
             """
@@ -372,7 +380,7 @@ def points_listener_factory(config: dict) -> typing.Callable[..., None]:
             """
             message = message_filter.sub('', message) if message else ''
             do_sound_req(**config, user=user, message=message, timestamp=timestamp)
-    return listener
+        return listener
 
 
 def do_token_work(config_file: Path):
