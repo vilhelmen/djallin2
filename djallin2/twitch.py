@@ -103,15 +103,15 @@ def build_and_validate_listener_conf(config):
     """
     # First, find all the chat and point listeners. then unkink all the links
     listener_conf = {
-        'chat': {k: v for k, v in config.get('chat',  {}).items() if 'link' not in v},
-        'points': {k: v for k, v in config.get('points',  {}).items() if 'link' not in v}
+        'chat': {k: v for k, v in config.get('chat', {}).items() if 'link' not in v},
+        'points': {k: v for k, v in config.get('points', {}).items() if 'link' not in v}
     }
 
     section = None
     name = None
     try:
         for section in listener_conf.keys():
-            for name, conf in {k: v for k, v in config.get(section,  {}).items() if 'link' in v}.items():
+            for name, conf in {k: v for k, v in config.get(section, {}).items() if 'link' in v}.items():
                 source = conf['link'].split('.')
                 # keys set in the linker override the linkee but I'm not gonna announce that
                 instance = listener_conf[source[0]][source[1]] | conf
@@ -134,8 +134,8 @@ def build_and_validate_listener_conf(config):
             'random': (int,),
             'priority': (bool,),
             'stats': (bool,),
-            'rewardname': (str,),
-            'chaos': (bool,),
+            'name': (str,),
+            'nonblock': (bool,),
             'custom': (str,),
         },
         'chat': {
@@ -147,7 +147,7 @@ def build_and_validate_listener_conf(config):
             'random': (int, type(None)),
             'priority': (bool,),
             'stats': (bool,),
-            'chaos': (bool,),
+            'nonblock': (bool,),
             'custom': (str,),
         }
     }
@@ -161,36 +161,66 @@ def build_and_validate_listener_conf(config):
                             logging.critical(msg)
                             raise RuntimeError(msg)
                 # Types look good, do any formatting
-                conf['target'] = Path(conf['target'])
+                # just sandblast our config blob
+                user_config = copy.deepcopy(conf)
+                conf.clear()
+
+                conf['entry_name'] = name
+
+                if 'custom' in user_config and user_config.keys() - {'custom'}:
+                    msg = f'Error in {section}.{name}, custom does not support additional settings'
+                    logging.critical(msg)
+                    raise RuntimeError(msg)
+                elif 'custom' in user_config:
+                    # that's all you get!
+                    conf['custom'] = user_config['custom']
+                    continue
+                else:
+                    conf['custom'] = None
+
+                conf['target'] = Path(user_config['target'])
                 # I guess we should raise if it's missing
                 if not conf['target'].exists():
                     msg = f'Error in {section}.{name}, target {conf["target"]} does not exist'
                     logging.critical(msg)
                     raise RuntimeError(msg)
+
                 conf['target_is_file'] = conf['target'].is_file()
-                conf['stats'] = conf.get('stats', False)
-                conf['chaos'] = conf.get('chaos', False)
-                conf['random'] = conf.get('random', 0)
-                if conf['random'] not in {0, 1, 2}:
+
+                if conf['target_is_file']:
+                    conf['target_file_list'] = []
+                else:
+                    conf['target_file_list'] = [_ for _ in conf['target'].glob('*.mp3')]
+
+                conf['stats'] = user_config.get('stats', False)
+                conf['nonblock'] = user_config.get('nonblock', False)
+
+                conf['random_mode'] = user_config.get('random', 0)
+                if conf['random_mode'] not in {0, 1, 2}:
                     conf['random'] = 0
-                conf['priority'] = conf.get('priority', False)
+
+                conf['priority'] = user_config.get('priority', False)
+
                 if section == 'chat':
-                    conf['names'] = set(conf.get('names', []))
-                    conf['badges'] = set(conf.get('badges', []))
-                    conf['command_mode'] = conf.get('command_mode', 'start')
-                    if conf['command_mode'] == 'contains' and (conf['random'] != 2 and not conf['target_is_file']):
+                    conf['name_set'] = set(user_config.get('names', []))
+                    conf['badge_set'] = set(user_config.get('badges', []))
+                    conf['command_mode'] = user_config.get('command_mode', 'start')
+                    if conf['command_mode'] not in {'start', 'contains', 'regex'}:
+                        msg = f'Unrecognized command mode {conf["command_mode"]}'
+                        logging.critical(msg)
+                        raise RuntimeError(msg)
+                    elif conf['command_mode'] == 'contains' and \
+                            (conf['random_mode'] != 2 and not conf['target_is_file']):
                         msg = f'"contains" mode cannot be used unless "random" is 2 or "target" is a single file'
                         logging.critical(msg)
                         raise RuntimeError(msg)
-                    if conf['command_mode'] == 'regex':
-                        conf['command'] = re.compile(conf['command'])
-                if 'custom' in conf and conf.keys() - 'custom':
-                    msg = f'Error in {section}.{name}, custom does not support additional settings'
-                    logging.critical(msg)
-                    raise RuntimeError(msg)
-                # FIXME: this is ugly, merge conf to something I can ** in build_listener
-                if 'custom' not in conf:
-                    conf['custom'] = None
+                    elif conf['command_mode'] == 'regex':
+                        conf['command'] = re.compile(user_config['command'])
+                    else:
+                        conf['command'] = user_config['command']
+                elif section == 'points':
+                    conf['name'] = user_config['name']
+
     except Exception as err:
         logging.critical(f'Error validating config for {section}.{name}: {err}')
         raise
@@ -204,42 +234,12 @@ def build_listeners(listener_conf, sound_server, stat_server):
     try:
         for section in [k for k, v in listener_conf.items() if v]:
             for name, conf in sorted(listener_conf[section].items()):
+                conf['sound_server'] = sound_server
+                conf['stat_server'] = stat_server
                 if section == 'chat':
-                    chat_functions.append(
-                        chat_listener_factory({
-                            'badge_set': conf['badges'],
-                            'chaos': conf['chaos'],
-                            'command': conf['command'],
-                            'command_mode': conf['command_mode'],
-                            'custom': conf['custom'],
-                            'entry_name': name,
-                            'name_set': conf['names'],
-                            'priority_playback': conf['priority'],
-                            'random_mode': conf['random'],
-                            'sound_server': sound_server,
-                            'stat_server': stat_server,
-                            'stat_track': conf['stats'],
-                            'target': conf['target'],
-                            'target_file_list': [] if conf['target'].is_file() else [_ for _ in
-                                                                                     conf['target'].glob('*.mp3')],
-                            'target_is_file': conf['target_is_file'],
-                        }))
+                    chat_functions.append(chat_listener_factory(conf))
                 elif section == 'points':
-                    points_functions[conf['name']] = \
-                        points_listener_factory({
-                            'chaos': conf['chaos'],
-                            'custom': conf['custom'],
-                            'entry_name': name,
-                            'priority_playback': conf['priority'],
-                            'random_mode': conf['random'],
-                            'sound_server': sound_server,
-                            'stat_server': stat_server,
-                            'stat_track': conf['stats'],
-                            'target': conf['target'],
-                            'target_file_list': [] if conf['target'].is_file() else [_ for _ in
-                                                                                     conf['target'].glob('*.mp3')],
-                            'target_is_file': conf['target_is_file'],
-                        })
+                    points_functions[conf['name']] = points_listener_factory(conf)
                 else:
                     raise RuntimeError(f'Error building listeners, no known section {section}')
     except Exception as err:
@@ -253,24 +253,24 @@ def build_listeners(listener_conf, sound_server, stat_server):
 message_filter = re.compile(r'\W')
 
 
-def do_sound_req(*, chaos: bool, entry_name: str, message: str, priority_playback: bool, random_mode: int,
+def do_sound_req(*, nonblock: bool, entry_name: str, message: str, priority: bool, random_mode: int,
                  sound_server: SoundServer.SoundServer, stat_server: StatTracker.StatTracker,
                  stat_track: bool, target: Path, target_file_list: list, target_is_file: bool, timestamp: int,
                  user: str, **kwargs):
     request = None
     # We could switch to if len(list) == 1 but that would technically clobber a directory with one file
     if target_is_file:
-        request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp,
-                                           target, not chaos)
+        request = SoundServer.SoundRequest(50 if priority else 100, timestamp,
+                                           target, not nonblock)
     elif random_mode == 2 or (random_mode == 1 and message == 'random'):
-        request = SoundServer.SoundRequest(50 if priority_playback else 100, timestamp,
-                                           random.choice(target_file_list), not chaos)
+        request = SoundServer.SoundRequest(50 if priority else 100, timestamp,
+                                           random.choice(target_file_list), not nonblock)
     else:
         fname = message + '.mp3'
         selected_file = target / fname
         if selected_file.exists():
-            request = SoundServer.SoundRequest(50 if priority_playback else 100,
-                                               timestamp, selected_file, not chaos)
+            request = SoundServer.SoundRequest(50 if priority else 100,
+                                               timestamp, selected_file, not nonblock)
         else:
             logging.error(f'{fname} does not exist')
     if request is not None:
@@ -298,40 +298,44 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
         command_mode: str
         custom: str
         random_mode: int,
-        priority_playback: bool,
-        chaos: bool
+        priority: bool,
+        nonblock: bool
     :return: chat listener function
     """
-    def listener(*, badges: dict, tags: dict, timestamp: int, user: str, user_display: str, message: str, **kwargs) -> bool:
-        """
-        Checks various filters against the request and queues a sound.
-        :param badges: User badge map. badge (str): version (str)
-        :param tags: Twitch message tags. tag (str): value (str)
-        :param timestamp: Message timestamp (ms)
-        :param user: Username of the message sender, lowercase
-        :param user_display: User's display name
-        :param message: Chat message - !!NOT SANITIZED!!
-        :return: bool indicating if it fired. Stops processing listeners if True
-        """
-        if config['command_mode'] == 'start' and message.startswith(config['command']):
-            if (not config['badge_set'] and not config['name_set']) \
-                    or badges.keys() & config['badge_set'] \
-                    or user in config['name_set']:
-                message = message_filter.sub('', message[len(config['command']):]).lower()
-                return do_sound_req(**config, user=user, message=message, timestamp=timestamp)
-        elif config['command_mode'] == 'contains' and config['command'] in message:
-            if (not config['badge_set'] and not config['name_set']) \
-                    or badges.keys() & config['badge_set'] \
-                    or user in config['name_set']:
-                # ehh let's just mess up the message string
-                return do_sound_req(**config, user=user, message='__contains_mode_no_message', timestamp=timestamp)
-        elif config['command_mode'] == 'regex' and (match := config['command'].match(message)) is not None:
-            if (not config['badge_set'] and not config['name_set']) \
-                    or badges.keys() & config['badge_set'] \
-                    or user in config['name_set']:
-                return do_sound_req(**config, user=user,
-                                    message=match.groups()[0] if match.groups() else '__regex_no_capture',
-                                    timestamp=timestamp)
+    if config['custom']:
+        # WTF, exec works when I run it manually in the debugger but not otherwise
+        exec(config['custom'])
+    else:
+        def listener(*, badges: dict, tags: dict, timestamp: int, user: str, user_display: str, message: str, **kwargs) -> bool:
+            """
+            Checks various filters against the request and queues a sound.
+            :param badges: User badge map. badge (str): version (str)
+            :param tags: Twitch message tags. tag (str): value (str)
+            :param timestamp: Message timestamp (ms)
+            :param user: Username of the message sender, lowercase
+            :param user_display: User's display name
+            :param message: Chat message - !!NOT SANITIZED!!
+            :return: bool indicating if it fired. Stops processing listeners if True
+            """
+            if config['command_mode'] == 'start' and message.startswith(config['command']):
+                if (not config['badge_set'] and not config['name_set']) \
+                        or badges.keys() & config['badge_set'] \
+                        or user in config['name_set']:
+                    message = message_filter.sub('', message[len(config['command']):]).lower()
+                    return do_sound_req(**config, user=user, message=message, timestamp=timestamp)
+            elif config['command_mode'] == 'contains' and config['command'] in message:
+                if (not config['badge_set'] and not config['name_set']) \
+                        or badges.keys() & config['badge_set'] \
+                        or user in config['name_set']:
+                    # ehh let's just mess up the message string
+                    return do_sound_req(**config, user=user, message='__contains_mode_no_message', timestamp=timestamp)
+            elif config['command_mode'] == 'regex' and (match := config['command'].match(message)) is not None:
+                if (not config['badge_set'] and not config['name_set']) \
+                        or badges.keys() & config['badge_set'] \
+                        or user in config['name_set']:
+                    return do_sound_req(**config, user=user,
+                                        message=match.groups()[0] if match.groups() else '__regex_no_capture',
+                                        timestamp=timestamp)
 
     return listener
 
@@ -348,23 +352,26 @@ def points_listener_factory(config: dict) -> typing.Callable[..., None]:
         target_is_file: bool,
         target_file_list: list,
         random_mode: int,
-        priority_playback: bool,
-        chaos: bool
+        priority: bool,
+        nonblock: bool
         custom: str
     :return: Points responder
     """
-    def listener(user: str, user_display: str, timestamp: int, reward: dict, message: typing.Optional[str], **kwargs) -> None:
-        """
-        Reads a points redemption and does whatever it needs to do
-        :param user: Username of the sender, lowercase
-        :param user_display: User's display name
-        :param timestamp: Message timestamp (ms)
-        :param message: Reward input or None - !!NOT SANITIZED!!
-        :param reward: Redemption data from twitch - https://dev.twitch.tv/docs/pubsub#example-channel-points-event-message
-        :return: None
-        """
-        message = message_filter.sub('', message) if message else ''
-        do_sound_req(**config, user=user, message=message, timestamp=timestamp)
+    if config['custom']:
+        exec(config['custom'], config)
+    else:
+        def listener(user: str, user_display: str, timestamp: int, reward: dict, message: typing.Optional[str], **kwargs) -> None:
+            """
+            Reads a points redemption and does whatever it needs to do
+            :param user: Username of the sender, lowercase
+            :param user_display: User's display name
+            :param timestamp: Message timestamp (ms)
+            :param message: Reward input or None - !!NOT SANITIZED!!
+            :param reward: Redemption data from twitch - https://dev.twitch.tv/docs/pubsub#example-channel-points-event-message
+            :return: None
+            """
+            message = message_filter.sub('', message) if message else ''
+            do_sound_req(**config, user=user, message=message, timestamp=timestamp)
     return listener
 
 
