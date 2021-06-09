@@ -254,10 +254,13 @@ def build_listeners(listener_conf, sound_server, stat_server):
 # message_filter = re.compile(r"""["'/\\<>:|?*\s]""")
 message_filter = re.compile(r'\W')
 
+def do_message_filter(message):
+    return message_filter.sub('', message) if message else ''
+
 
 def do_sound_req(*, nonblock: bool, entry_name: str, message: str, priority: bool, random_mode: int,
                  sound_server: SoundServer.SoundServer, stat_server: StatTracker.StatTracker,
-                 stat_track: bool, target: Path, target_file_list: list, target_is_file: bool, timestamp: int,
+                 stats: bool, target: Path, target_file_list: list, target_is_file: bool, timestamp: int,
                  user: str, **kwargs):
     request = None
     # We could switch to if len(list) == 1 but that would technically clobber a directory with one file
@@ -277,7 +280,7 @@ def do_sound_req(*, nonblock: bool, entry_name: str, message: str, priority: boo
             logging.error(f'{fname} does not exist')
     if request is not None:
         sound_server.enqueue(request)
-        if stat_track:
+        if stats:
             stat_server.submit('chat', user, entry_name, timestamp, message)
         return True
     return False
@@ -312,7 +315,9 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
         # the local variables won't be available to functions in the exec block at call time??
         # https://stackoverflow.com/a/24734880
         locals = {}
-        exec(config['custom'], {'config': config, 'SoundRequest': SoundServer.SoundRequest}, locals)
+        exec(config['custom'],
+             {'config': config, 'SoundRequest': SoundServer.SoundRequest, 'do_message_filter': do_message_filter},
+             locals)
         return locals['listener']
     else:
         def listener(*, badges: dict, tags: dict, timestamp: int, user: str, user_display: str, message: str, **kwargs) -> bool:
@@ -367,7 +372,9 @@ def points_listener_factory(config: dict) -> typing.Callable[..., None]:
     """
     if config['custom']:
         locals = {}
-        exec(config['custom'], {'config': config}, locals)
+        exec(config['custom'],
+             {'config': config, 'SoundRequest': SoundServer.SoundRequest, 'do_message_filter': do_message_filter},
+             locals)
         return locals['listener']
     else:
         def listener(user: str, user_display: str, timestamp: int, reward: dict, message: typing.Optional[str], **kwargs) -> None:
