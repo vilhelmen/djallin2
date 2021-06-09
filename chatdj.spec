@@ -8,6 +8,7 @@ a = Analysis(['chatdj.py'],
              binaries=[],
              datas=[*copy_metadata('djallin2'), ('djallin2/internal/*.mp3', 'djallin2/internal')],
              # Why do you have to ANALYZE. I told you to include it
+             # FIXME: websockets.legacy can be removed once their refactor is complete
              hiddenimports=['gtts', 'websockets.legacy', 'websockets.legacy.client'],
              hookspath=[],
              runtime_hooks=[],
