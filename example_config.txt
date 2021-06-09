@@ -1,10 +1,10 @@
 # Enter token here for manual authorization.
 # Empty/missing/bad tokens will trigger automatic registration
-token = ""
+token = ''
 
 # Database to store stats in, defaults to stats.sqlite.
 # Database will not be setup unless at least one listener uses it
-stats_db = "stats.sqlite"
+stats_db = 'stats.sqlite'
 
 # chat.NAME will define a chat listener
 # Responders will be checked in alphabetical order, stopping at the first successful request
@@ -16,26 +16,26 @@ stats_db = "stats.sqlite"
     #   TODO: see if a VIP badge is just vip
     #   Twitch doesn't give a good list, sorry.
     #   NOTE: you are not considered a moderator of your own channel in the badge system
-    names = ["vilhel"]
-    badges = ["moderator", "broadcaster"]
+    names = ['vilhel']
+    badges = ['moderator', 'broadcaster']
     # What command triggers playback. Must be at the start of a message.
     # "" will check every message for a file match.
     # You probably want a space on the end to prevent command confusion.
     #  Directory playback will sanitize the remainder of the message, append .mp3, and search for that file
     #  Single file playback will ignore the user message and play the target mp3
     #  See below for random playback settings and command modes
-    command = "!sound "
+    command = '!sound '
     # How the command is searched for
     #  "start" (default) means the specified command must be at the start of the message
     #  "contains" means it has to be in the message somewhere.
     #    It will most likely get confused easily. Only supports single playback or random 2
     #  "regex" means you know what you're doing and the command string is regex.
     #    TOML string literal is single quotes. A capture group, if it exists, will be used as the sound name.
-    command_mode = "start"
+    command_mode = 'start'
     # What will be played when triggered. Relative paths are relative to this config file.
     #  A directory will be searched as described above
     #  A single mp3 will play regardless of the message
-    target = "./sounds/"
+    target = './sounds/'
     # Random playback settings. Not compatible with single file playback.
     #  1 will enable the "random" command, which will play a random sound in the target director
     #    "random.mp3" can only be triggered by random selection if it exists
@@ -49,22 +49,59 @@ stats_db = "stats.sqlite"
     stats = true
 
 [chat.wisdom]
-    command = "!wisdom"
+    command = '!wisdom'
     random = 2
-    target = "./wisdom/"
+    target = './wisdom/'
 
 [chat.zz_cowboy]
-    command = "cowboy"
-    command_mode = "contains"
+    command = 'cowboy'
+    command_mode = 'contains'
     random = 2
-    target = "./yeehaw/"
+    target = './yeehaw/'
     priority = true
 
 # points.NAME will define a point redemption listener
 [points.sound]
     # Point redemption name
-    name = "play sound"
+    name = 'play sound'
     # Supports all configuration a chat listener does, except for "names" and "badges"
     # Alternatively, link it to an existing listener to copy all settings
     #  Linking to a configuration with a link probably won't work
-    link = "chat.sound"
+    link = 'chat.sound'
+
+[points.number]
+name = 'guess the number'
+custom='''
+# import tempfile
+import random
+from pathlib import Path
+
+config['todays_number'] = random.randrange(1,100)
+print("TODAY'S NUMBER:", config['todays_number'])
+config['done'] = False
+config['winner_label'] = Path.home() / 'obs' / 'numbers' / 'winner.txt'
+config['winner_label'].write_text('')
+config['winner_audio'] = Path.home() / 'obs' / 'numbers' / 'winner.mp3'
+config['loser_audio'] = Path.home() / 'obs' / 'numbers' / 'bzzz.mp3'
+
+# Your function MUST be named listener and the last argument must be **kwargs
+def listener(user, user_display, timestamp, message, **kwargs):
+    if not config['done']:
+        config['stat_server'].submit('points', user, 'number', timestamp, message)
+        try:
+            val = int(message)
+        except:
+            val = None
+        if val == config['todays_number']:
+            config['done'] = True
+            config['winner_label'].write_text(user_display)
+            msg = f"Congratulations {user_display.replace('_', ' ')}! You have guessed today's number, {config['todays_number']}!"
+            # Imports in the outer scope will disappear, don't ask me why
+            from gtts import gTTS
+            tts = gTTS(text=msg,lang="en", slow=False)
+            tts.save(config['winner_audio'])
+            # SoundRequest will be exposed to custom code
+            config['sound_server'].enqueue(SoundRequest(30, timestamp, config['winner_audio'], True))
+        else:
+            config['sound_server'].enqueue(SoundRequest(30, timestamp, config['loser_audio'], True))
+'''

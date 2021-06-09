@@ -167,12 +167,16 @@ def build_and_validate_listener_conf(config):
 
                 conf['entry_name'] = name
 
+                if section == 'points':
+                    conf['name'] = user_config['name']
+
                 if 'custom' in user_config and user_config.keys() - {'custom'}:
                     msg = f'Error in {section}.{name}, custom does not support additional settings'
                     logging.critical(msg)
                     raise RuntimeError(msg)
                 elif 'custom' in user_config:
                     # that's all you get!
+                    # ... and your points name
                     conf['custom'] = user_config['custom']
                     continue
                 else:
@@ -218,8 +222,6 @@ def build_and_validate_listener_conf(config):
                         conf['command'] = re.compile(user_config['command'])
                     else:
                         conf['command'] = user_config['command']
-                elif section == 'points':
-                    conf['name'] = user_config['name']
 
     except Exception as err:
         logging.critical(f'Error validating config for {section}.{name}: {err}')
@@ -310,7 +312,7 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
         # the local variables won't be available to functions in the exec block at call time??
         # https://stackoverflow.com/a/24734880
         locals = {}
-        exec(config['custom'], {'config': config}, locals)
+        exec(config['custom'], {'config': config, 'SoundRequest': SoundServer.SoundRequest}, locals)
         return locals['listener']
     else:
         def listener(*, badges: dict, tags: dict, timestamp: int, user: str, user_display: str, message: str, **kwargs) -> bool:
