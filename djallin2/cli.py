@@ -37,6 +37,11 @@ def boot():
     # Just for reference for now
     bundled = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
 
+    if bundled:
+        # Hack at fixing pyinstaller imports
+        import gtts
+        #import websockets.legacy
+
     try:
         args = run_argparse(bundled)
 
