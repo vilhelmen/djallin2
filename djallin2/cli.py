@@ -37,12 +37,13 @@ def boot():
     # Just for reference for now
     bundled = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
 
-    if bundled:
-        # Hack at fixing pyinstaller imports
-        import gtts
-        #import websockets.legacy
-
     try:
+        if bundled:
+            # Hack at fixing pyinstaller imports
+            import gtts
+            #import websockets.legacy
+            #import websockets.legacy.client
+
         args = run_argparse(bundled)
 
         logging.basicConfig(level=logging.DEBUG if args['debug'] else logging.INFO,

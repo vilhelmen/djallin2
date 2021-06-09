@@ -170,7 +170,7 @@ def build_and_validate_listener_conf(config):
                 if section == 'points':
                     conf['name'] = user_config['name']
 
-                if 'custom' in user_config and user_config.keys() - {'custom'}:
+                if 'custom' in user_config and user_config.keys() - {'custom', 'name'}:
                     msg = f'Error in {section}.{name}, custom does not support additional settings'
                     logging.critical(msg)
                     raise RuntimeError(msg)
