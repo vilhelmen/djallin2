@@ -8,7 +8,7 @@ a = Analysis(['chatdj.py'],
              binaries=[],
              datas=[*copy_metadata('djallin2'), ('djallin2/internal/*.mp3', 'djallin2/internal')],
              # Why do you have to ANALYZE. I told you to include it
-             hiddenimports=['gtts', websockets.legacy'],
+             hiddenimports=['gtts', 'websockets.legacy'],
              hookspath=[],
              runtime_hooks=[],
              excludes=[],
