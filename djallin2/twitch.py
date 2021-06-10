@@ -351,7 +351,7 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
                     if not match.groups():
                         do_sound_req(**config, user=user, message='__regex_no_capture', timestamp=timestamp)
                     else:
-                        for san_match in (message_filter.sub('', _) for _ in match.groups()):
+                        for san_match in (message_filter.sub('', _) for _ in match.groups() if _):
                             do_sound_req(**config, user=user, message=san_match, timestamp=timestamp)
                             timestamp += 0.0001
                     # Making a decision here, you matched the regex, you count as fired.
