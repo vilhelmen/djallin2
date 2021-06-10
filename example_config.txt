@@ -71,6 +71,7 @@ stats_db = 'stats.sqlite'
 
 [points.number]
 name = 'guess the number'
+# Points and chat listeners support custom code. It's not well documented, but it works!
 custom='''
 # import tempfile
 import random
