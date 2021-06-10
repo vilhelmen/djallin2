@@ -618,7 +618,7 @@ async def points_ws_listener(config, server_validation, points_functions):
                 async for msg in ws:
                     # If we got sent bad json, idk what to tell you.
                     # I mean, a nicer error message would be cool but ehhhh
-                    await ws.close()
+                    logging.debug(msg)
                     msg = json.loads(msg)
                     if msg.get('type') == 'reward-redeemed':
                         try:

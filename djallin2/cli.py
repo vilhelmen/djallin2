@@ -40,6 +40,8 @@ def boot():
     try:
         args = run_argparse(bundled)
 
+        args['debug'] = True
+
         logging.basicConfig(level=logging.DEBUG if args['debug'] else logging.INFO,
                             format='%(levelname)s:%(threadName)s:%(message)s')
         logger.setLevel(logging.DEBUG if args['debug'] else logging.INFO)
