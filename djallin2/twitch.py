@@ -258,6 +258,7 @@ def do_message_filter(message):
     return message_filter.sub('', message) if message else ''
 
 
+# FIXME: do sanitization here?
 def do_sound_req(*, nonblock: bool, entry_name: str, message: str, priority: bool, random_mode: int,
                  sound_server: SoundServer.SoundServer, stat_server: StatTracker.StatTracker,
                  stats: bool, target: Path, target_file_list: list, target_is_file: bool, timestamp: int,
@@ -335,7 +336,7 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
                 if (not config['badge_set'] and not config['name_set']) \
                         or badges.keys() & config['badge_set'] \
                         or user in config['name_set']:
-                    message = message_filter.sub('', message[len(config['command']):]).lower()
+                    message = message_filter.sub('', message[len(config['command']):])
                     return do_sound_req(**config, user=user, message=message, timestamp=timestamp)
             elif config['command_mode'] == 'contains' and config['command'] in message:
                 if (not config['badge_set'] and not config['name_set']) \
@@ -347,9 +348,15 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
                 if (not config['badge_set'] and not config['name_set']) \
                         or badges.keys() & config['badge_set'] \
                         or user in config['name_set']:
-                    return do_sound_req(**config, user=user,
-                                        message=match.groups()[0] if match.groups() else '__regex_no_capture',
-                                        timestamp=timestamp)
+                    if not match.groups():
+                        do_sound_req(**config, user=user, message='__regex_no_capture', timestamp=timestamp)
+                    else:
+                        for san_match in (message_filter.sub('', _) for _ in match.groups()):
+                            do_sound_req(**config, user=user, message=san_match, timestamp=timestamp)
+                            timestamp += 0.0001
+                    # Making a decision here, you matched the regex, you count as fired.
+                    return True
+
         return listener
 
 

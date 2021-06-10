@@ -30,7 +30,8 @@ stats_db = 'stats.sqlite'
     #  "contains" means it has to be in the message somewhere.
     #    It will most likely get confused easily. Only supports single playback or random 2
     #  "regex" means you know what you're doing and the command string is regex.
-    #    TOML string literal is single quotes. A capture group, if it exists, will be used as the sound name.
+    #    TOML string literal is single quotes.
+    #    Any and all capture groups, if they exists, will be submitted as sound names.
     command_mode = 'start'
     # What will be played when triggered. Relative paths are relative to this config file.
     #  A directory will be searched as described above
