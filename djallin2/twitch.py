@@ -168,7 +168,7 @@ def build_and_validate_listener_conf(config):
                 conf['entry_name'] = name
 
                 if section == 'points':
-                    conf['name'] = user_config['name']
+                    conf['name'] = user_config['name'].strip().lower()
 
                 if 'custom' in user_config and user_config.keys() - {'custom', 'name'}:
                     msg = f'Error in {section}.{name}, custom does not support additional settings'
@@ -573,6 +573,9 @@ def chat_listener(config, server_validation, chat_functions):
             retry_count += 1
             if retry_count >= 3:
                 logging.critical('Too many chat failures!%s', dead_msg)
+                # FIXME: jank way to trigger shutdown on failure
+                #  unless we want to raise System Exit
+                shutdown_event.set()
                 raise RuntimeError('Too many chat failures') from err
         sleep_event.wait(2**retry_count)
 
@@ -626,14 +629,14 @@ async def points_ws_listener(config, server_validation, points_functions):
                             username = redemption['user']['login']
                             display_name = redemption['user'].get('display_name', username)
                             timestamp = int(dateutil.parser.parse(msg['data']['timestamp']).timestamp() * 1000)
-                            what = redemption['reward']['title'].strip()
+                            what = redemption['reward']['title'].strip().lower()
                             logging.info(f'{display_name} redeemed "{what}"')
                             if what in points_functions:
-                                points_functions['what'](user=username,
-                                                         user_display=display_name,
-                                                         timestamp=timestamp,
-                                                         reward=redemption,
-                                                         message=redemption.get('user_input'))
+                                points_functions[what](user=username,
+                                                       user_display=display_name,
+                                                       timestamp=timestamp,
+                                                       reward=redemption,
+                                                       message=redemption.get('user_input'))
                             else:
                                 logging.error('But there is no function for it')
                         except Exception as err:
@@ -642,6 +645,7 @@ async def points_ws_listener(config, server_validation, points_functions):
                     elif msg.get('type') == 'PONG':
                         # Cool, got a ping response.
                         logging.info('Got PubSub PONG')
+                        retry_count = 0
                         loop.create_task(points_ws_send_ping_in(260 + random.randrange(-20, 20), ws))
                     elif msg.get('type') == 'RECONNECT':
                         # Idk if there were messages in the queue or what will happen
@@ -656,6 +660,9 @@ async def points_ws_listener(config, server_validation, points_functions):
             logging.error(traceback.format_exc())
             retry_count += 1
             if retry_count >= 3:
+                # FIXME: jank way to trigger shutdown on failure
+                #  unless we want to raise System Exit
+                shutdown_event.set()
                 raise RuntimeError('Too many points failures') from err
         await asyncio.sleep(2**retry_count)
 
@@ -725,6 +732,9 @@ async def chat_ws_listener(login_username, oauth_token, chat_functions):
             logging.error(traceback.format_exc())
             retry_count += 1
             if retry_count >= 3:
+                # FIXME: jank way to trigger shutdown on failure
+                #  unless we want to raise System Exit
+                shutdown_event.set()
                 logging.critical('Too many chat failures!%s', dead_msg)
                 raise
         await asyncio.sleep(2**retry_count)
