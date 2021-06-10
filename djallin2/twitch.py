@@ -623,7 +623,10 @@ async def points_ws_listener(config, server_validation, points_functions):
                     # I mean, a nicer error message would be cool but ehhhh
                     logging.debug(msg)
                     msg = json.loads(msg)
-                    if msg.get('type') == 'reward-redeemed':
+                    # We only asked for chat points, so we don't filter by topic
+                    # twitch nests the actual message because topics!
+                    if msg.get('type') == 'MESSAGE' and msg['data']['message']['type'] == 'reward-redeemed':
+                        msg = msg['data']['message']
                         try:
                             redemption = msg['data']['redemption']
                             username = redemption['user']['login']
