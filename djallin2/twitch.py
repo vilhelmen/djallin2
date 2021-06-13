@@ -254,6 +254,7 @@ def build_listeners(listener_conf, sound_server, stat_server):
 # message_filter = re.compile(r"""["'/\\<>:|?*\s]""")
 message_filter = re.compile(r'\W')
 
+
 def do_message_filter(message):
     return message_filter.sub('', message) if message else ''
 

@@ -7,11 +7,13 @@ import urllib.parse
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# TODO: add a <noscript> warning
 receiver_html = r"""
-<html><body style="margin-left: 30%; margin-top: 10%; background: rgb(233, 233, 45); color: white;"><div>
-    <p style="font-size: 256px;">:|</p>
-    <form id="token_form" hidden method="POST" action="/" enctype="application/x-www-form-urlencoded">
+<html><head><noscript><style>p{ display: none; }</style></noscript></head>
+<body style="margin-left: 30%; margin-top: 10%; background: rgb(233, 233, 45); color: white;">
+<div style="font-size: 256px;">
+    <noscript>JavaScript Required</noscript>
+    <p>:|</p>
+    <form id="token_form" hidden="" method="POST" action="/" enctype="application/x-www-form-urlencoded">
         <input type="text" id="token_string" name="token_string">
     </form>
     <script>

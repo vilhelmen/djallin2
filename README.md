@@ -67,7 +67,7 @@ Both point and chat blocks support custom code actions, check the [example confi
 
 # TODO:
 1. This
-1. HTTP command receiver (lioran)
+1. HTTP command receiver (lioran?)
 1. custom hook code - lioran example? obs websocket?
 1. Bits?
 1. Does linux support audio these days?
