@@ -209,7 +209,7 @@ def build_and_validate_listener_conf(config):
                     conf['name_set'] = set(user_config.get('names', []))
                     conf['badge_set'] = set(user_config.get('badges', []))
                     conf['command_mode'] = user_config.get('command_mode', 'start')
-                    if conf['command_mode'] not in {'start', 'contains', 'regex'}:
+                    if conf['command_mode'] not in {'start', 'contains', 'regex', 'regex_find'}:
                         msg = f'Unrecognized command mode {conf["command_mode"]}'
                         logging.critical(msg)
                         raise RuntimeError(msg)
@@ -218,7 +218,7 @@ def build_and_validate_listener_conf(config):
                         msg = f'"contains" mode cannot be used unless "random" is 2 or "target" is a single file'
                         logging.critical(msg)
                         raise RuntimeError(msg)
-                    elif conf['command_mode'] == 'regex':
+                    elif conf['command_mode'] in {'regex', 'regex_find'}:
                         conf['command'] = re.compile(user_config['command'])
                     else:
                         conf['command'] = user_config['command']
@@ -355,6 +355,16 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
                         for san_match in (message_filter.sub('', _) for _ in match.groups() if _):
                             do_sound_req(**config, user=user, message=san_match, timestamp=timestamp)
                             timestamp += 0.0001
+                    # Making a decision here, you matched the regex, you count as fired.
+                    return True
+            # Switch to regex for repeating captures? Can't seem to get the syntax right though for use with match()
+            elif config['command_mode'] == 'regex_find' and (match := config['command'].findall(message)) is not None:
+                if (not config['badge_set'] and not config['name_set']) \
+                        or badges.keys() & config['badge_set'] \
+                        or user in config['name_set']:
+                    for san_match in filter(None, (message_filter.sub('', _) for _ in match)):
+                        do_sound_req(**config, user=user, message=san_match, timestamp=timestamp)
+                        timestamp += 0.0001
                     # Making a decision here, you matched the regex, you count as fired.
                     return True
 

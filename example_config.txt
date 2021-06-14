@@ -32,6 +32,8 @@ stats_db = 'stats.sqlite'
     #  "regex" means you know what you're doing and the command string is regex.
     #    TOML string literal is single quotes.
     #    Any and all capture groups, if they exists, will be submitted as sound names.
+    #  "regex_find" uses findall() instead of match()
+    # All sound submissions are filtered through '\W' -> '' for safety
     command_mode = 'start'
     # What will be played when triggered. Relative paths are relative to this config file.
     #  A directory will be searched as described above
@@ -54,12 +56,22 @@ stats_db = 'stats.sqlite'
     random = 2
     target = './wisdom/'
 
-[chat.zz_cowboy]
+[chat.combo]
+    command = '!combo \W*(\w+)\W+(\w+)\W*'
+    command_mode = 'regex'
+    target = './sounds/'
+
+[chat.z_cowboy]
     command = 'cowboy'
     command_mode = 'contains'
     random = 2
     target = './yeehaw/'
     priority = true
+
+[chat.zz_absolute_chaos]
+    command = '\w+'
+    command_mode = 'regex_find'
+    target = './sounds/'
 
 # points.NAME will define a point redemption listener
 [points.sound]
