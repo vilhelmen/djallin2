@@ -67,6 +67,13 @@ Both point and chat blocks support custom code actions, check the [example confi
 
 Playback statistics can be recorded to a sqlite3 database of your choice.
 Simply add `stats = true` to your configuration block.
+```toml
+[chat.sound]
+    target = './sounds/'
+    command = '!sound '
+    stats = true
+```
+
 The name of the database can be changed by setting `stats_db = 'database.sqlite'` at the top of your configuration file.
 
 # TODO:
