@@ -71,6 +71,7 @@ The name of the database can be changed by setting `stats_db = 'database.sqlite'
 
 # TODO:
 1. This
+1. Let exit on fire be a configurable option?
 1. HTTP command receiver (lioran?)
 1. custom hook code - lioran example? obs websocket?
 1. Bits?
