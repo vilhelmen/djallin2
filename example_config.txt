@@ -12,8 +12,7 @@ stats_db = 'stats.sqlite'
 [chat.sound]
     # Who can run this command. Allows badge-based filters or a list of names.
     # Delete both filters to allow anyone.
-    #  Badges include admin, bits, broadcaster, global_mod, moderator, subscriber, staff, turbo, "and more"
-    #   TODO: see if a VIP badge is just vip
+    #  Badges include admin, bits, broadcaster, global_mod, moderator, subscriber, staff, turbo, vip, "and more"
     #   Twitch doesn't give a good list, sorry.
     #   NOTE: you are not considered a moderator of your own channel in the badge system
     names = ['vilhel']
@@ -57,6 +56,8 @@ stats_db = 'stats.sqlite'
     target = './wisdom/'
 
 [chat.combo]
+    # Regex mode is pretty flexible, but does not support repeating captures.
+    # This example will match 2 sound names and will play them in order
     command = '!combo \W*(\w+)\W+(\w+)\W*'
     command_mode = 'regex'
     target = './sounds/'
@@ -69,6 +70,7 @@ stats_db = 'stats.sqlite'
     priority = true
 
 [chat.zz_absolute_chaos]
+    # Regex Find mode runs every match. This will play any word that matches a sound.
     command = '\w+'
     command_mode = 'regex_find'
     target = './sounds/'
