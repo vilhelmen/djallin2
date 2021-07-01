@@ -65,6 +65,10 @@ Chat listeners are checked in alphabetical order and when one plays a sound, che
 
 Both point and chat blocks support custom code actions, check the [example configuration](./example_config.txt) for details.
 
+Playback statistics can be recorded to a sqlite3 database of your choice.
+Simply add `stats = true` to your configuration block.
+The name of the database can be changed by setting `stats_db = 'database.sqlite'` at the top of your configuration file.
+
 # TODO:
 1. This
 1. HTTP command receiver (lioran?)
