@@ -63,6 +63,8 @@ stats_db = 'stats.sqlite'
     target = './sounds/'
 
 [chat.z_cowboy]
+    # Contains mode simply checks if it's in the message.
+    # Because of that, it can't parse messages, so it has to either trigger a single file or play a random one.
     command = 'cowboy'
     command_mode = 'contains'
     random = 2
@@ -87,6 +89,8 @@ stats_db = 'stats.sqlite'
 [points.number]
 name = 'guess the number'
 # Points and chat listeners support custom code. It's not well documented, but it works!
+# For these to work, your input file (probably) must have unix line endings.
+# This example picks a random number at boot, prints it, and announces if someone guesses it via channel point rewards.
 custom='''
 # import tempfile
 import random
