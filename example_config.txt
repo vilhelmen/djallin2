@@ -96,6 +96,7 @@ custom='''
 import random
 from pathlib import Path
 
+# Variables here won't be remembered. It's complicated. Stick anything you want saved in config
 config['todays_number'] = random.randrange(1,100)
 print("TODAY'S NUMBER:", config['todays_number'])
 config['done'] = False
