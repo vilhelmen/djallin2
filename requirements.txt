@@ -3,3 +3,4 @@ tomlkit
 requests
 python-dateutil
 websockets
+packaging

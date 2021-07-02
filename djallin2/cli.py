@@ -6,7 +6,9 @@ import sys
 import traceback
 from pathlib import Path
 
+import packaging.version
 import pkg_resources
+import requests
 
 from . import twitch
 
@@ -33,6 +35,38 @@ def run_argparse(bundled):
     return vars(parser.parse_args())
 
 
+update_str = r'''
+ _   _ ____  ____    _  _____ _____      ____  
+| | | |  _ \|  _ \  / \|_   _| ____|   _|  _ \ 
+| | | | |_) | | | |/ _ \ | | |  _|    (_) | | |
+| |_| |  __/| |_| / ___ \| | | |___    _| |_| |
+ \___/|_|   |____/_/   \_\_| |_____|  (_)____/ 
+'''
+
+
+def version_check():
+    try:
+        response = requests.get('https://api.github.com/repos/vilhelmen/djallin2/releases',
+                                headers={'Accept': 'application/vnd.github.v3+json'})
+        response.raise_for_status()
+        response = [(packaging.version.parse(rel['tag_name']), rel) for rel in response.json()]
+    except Exception as err:
+        logging.error(f'Error running update check: {err}')
+        return
+
+    current_ver = packaging.version.parse(pkg_resources.get_distribution(__package__).version)
+
+    if not current_ver.is_prerelease:
+        # hide dev versions
+        response = list(filter(lambda x: not x[0].is_prerelease, response))
+
+    latest = response[0]
+
+    if latest[0] > current_ver:
+        logging.info(update_str)
+        logging.info(latest[1]['html_url'])
+
+
 def boot():
     # Just for reference for now
     bundled = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
@@ -43,6 +77,8 @@ def boot():
         logging.basicConfig(level=logging.DEBUG if args['debug'] else logging.INFO,
                             format='%(levelname)s:%(threadName)s:%(message)s')
         logger.setLevel(logging.DEBUG if args['debug'] else logging.INFO)
+
+        version_check()
 
         twitch.launch_system(args['config'], args['quiet'], args['debug'])
     except Exception as err:
