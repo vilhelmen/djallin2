@@ -796,7 +796,6 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
-    signal.signal(signal.SIGHUP, handler)
     # Rumor has it SIGBREAK will happen on window close
     # OR NOT >:C I can't find a way to do it without win32 apis. Rude.
     if platform.system() == 'Windows':
@@ -809,6 +808,8 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
             logging.critical('Closing')
             shutdown_event.set()
         win32api.SetConsoleCtrlHandler(win_handler, True)
+    else:
+        signal.signal(signal.SIGHUP, handler)
 
 
     logging.debug('Starting sound server')
