@@ -33,4 +33,4 @@ exe = EXE(pyz,
           upx_exclude=[],
           runtime_tmpdir=None,
           console=True,
-          icon='icon.ico') # FIXME: icon disappears on my 4k. 512x512? MS docs still say it's max 256x256
+          icon='icon.ico')

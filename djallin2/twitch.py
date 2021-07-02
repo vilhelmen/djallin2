@@ -23,7 +23,6 @@ import requests
 import toml
 import tomlkit
 import websockets
-import win32api
 
 from . import OAuth2Receiver, SoundServer, StatTracker
 
@@ -178,6 +177,7 @@ def build_and_validate_listener_conf(config):
                 elif 'custom' in user_config:
                     # that's all you get!
                     # ... and your points name
+                    # Good news, read_text does newline conversion, it seems.
                     conf['custom'] = user_config['custom']
                     continue
                 else:
@@ -804,13 +804,13 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
         #  We can hang the process here, but we have no way to know it's flushed.
         #  So I guess the sound server needs to register with atexit
         #  What is "normal program termination" anyway
+        import win32api
         def win_handler():
             logging.critical('Closing')
             shutdown_event.set()
         win32api.SetConsoleCtrlHandler(win_handler, True)
     else:
         signal.signal(signal.SIGHUP, handler)
-
 
     logging.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
