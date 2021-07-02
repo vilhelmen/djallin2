@@ -795,7 +795,9 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
-
+    # Rumor has it SIGBREAK will happen on window close
+    if platform.system() == 'Windows':
+        signal.signal(signal.SIGBREAK, handler)
 
     logging.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
