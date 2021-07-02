@@ -789,6 +789,7 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     logging.debug('Attaching signal handlers')
 
     def handler(signum, frame):
+        Path('sig.txt').write_text(f'signum')
         logging.critical(f'SIG{signum}: shutting down')
         shutdown_event.set()
 
@@ -797,7 +798,13 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     signal.signal(signal.SIGTERM, handler)
     # Rumor has it SIGBREAK will happen on window close
     if platform.system() == 'Windows':
+        signal.signal(signal.SIGTERM, handler)
+        signal.signal(signal.SIGABRT, handler)
+        signal.signal(signal.SIGFPE, handler)
+        signal.signal(signal.SIGILL, handler)
+        signal.signal(signal.SIGSEGV, handler)
         signal.signal(signal.SIGBREAK, handler)
+
 
     logging.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
