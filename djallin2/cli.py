@@ -23,7 +23,7 @@ def run_argparse(bundled):
             raise argparse.ArgumentTypeError(f'"{value}" does not exist or is not a file')
         return path
 
-    parser = argparse.ArgumentParser(fromfile_prefix_chars='@', exit_on_error= bundled)
+    parser = argparse.ArgumentParser(fromfile_prefix_chars='@', exit_on_error=not bundled)
     parser.add_argument('--config', type=path_check_file_exists, default='config.txt', help='Configuration file')
     parser.add_argument('--quiet', action='store_true', help='Suppress startup sound')
     parser.add_argument('--debug', action='store_true', help='Extra logging')

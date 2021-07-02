@@ -76,6 +76,15 @@ Simply add `stats = true` to your configuration block.
 
 The name of the database can be changed by setting `stats_db = 'database.sqlite'` at the top of your configuration file.
 
+# Known issues
+
+Closing the soundbot window in Windows can lose some stat activity.
+Use `ctrl+c` to exit the program.
+
+If a red screen shows when registering your twitch token, there may be a problem with your connection.
+Close the soundbot and try again.
+
+
 # TODO:
 1. This
 1. Let exit on fire be a configurable option?

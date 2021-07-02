@@ -23,6 +23,7 @@ import requests
 import toml
 import tomlkit
 import websockets
+import win32api
 
 from . import OAuth2Receiver, SoundServer, StatTracker
 
@@ -789,21 +790,25 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     logging.debug('Attaching signal handlers')
 
     def handler(signum, frame):
-        Path('sig.txt').write_text(f'signum')
         logging.critical(f'SIG{signum}: shutting down')
         shutdown_event.set()
 
     # On Windows, signal() can only be called with SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM, or SIGBREAK.
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGHUP, handler)
     # Rumor has it SIGBREAK will happen on window close
+    # OR NOT >:C I can't find a way to do it without win32 apis. Rude.
     if platform.system() == 'Windows':
-        signal.signal(signal.SIGTERM, handler)
-        signal.signal(signal.SIGABRT, handler)
-        signal.signal(signal.SIGFPE, handler)
-        signal.signal(signal.SIGILL, handler)
-        signal.signal(signal.SIGSEGV, handler)
-        signal.signal(signal.SIGBREAK, handler)
+        # FIXME: We don't have a way to make sure the stat tracker saves.
+        #  So I guess this is "good" but probably too little too late.
+        #  We can hang the process here, but we have no way to know it's flushed.
+        #  So I guess the sound server needs to register with atexit
+        #  What is "normal program termination" anyway
+        def win_handler():
+            logging.critical('Closing')
+            shutdown_event.set()
+        win32api.SetConsoleCtrlHandler(win_handler, True)
 
 
     logging.debug('Starting sound server')
