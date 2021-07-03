@@ -1,0 +1,10 @@
+# Soundbot will handle your token for you
+token = ''
+
+[chat.sound]
+    # Responds to '!sound xyz'
+    command = '!sound '
+    # Runs file in an adjacent directory called sounds
+    target = './sounds/'
+    # Enables '!sound random'
+    random = 1

@@ -8,6 +8,14 @@ Note for Windows users, your antivirus will probably think it's a trojan.
 It's not, but it kinda looks like one to your antivirus.
 If you get the option to report a false positive, please do so.
 
+## Quickstart
+
+Want `!sound` to just work?
+* Download the latest build from the [releases tab](https://github.com/vilhelmen/djallin2/releases)
+* Download the [quick config file](./quick_config.txt), rename it to `config.txt`
+* Place your sounds in a folder called sounds, next to the app and config
+* Run it, your browser will open to handle the initial Twitch connection
+
 ## Configuration
 
 `config.txt` holds your token and configures chat and point responders.
