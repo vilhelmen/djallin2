@@ -15,6 +15,7 @@ Want `!sound` to just work?
 * Download the [quick config file](./quick_config.txt), rename it to `config.txt`
 * Place your sounds in a folder called sounds, next to the app and config
 * Run it, your browser will open to handle the initial Twitch connection
+    * This will happen every ~3 months as necessary
 
 ## Configuration
 
