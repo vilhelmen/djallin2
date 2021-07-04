@@ -798,19 +798,6 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     signal.signal(signal.SIGTERM, handler)
     # Rumor has it SIGBREAK will happen on window close
     # OR NOT >:C I can't find a way to do it without win32 apis. Rude.
-    if platform.system() == 'Windows':
-        # FIXME: We don't have a way to make sure the stat tracker saves.
-        #  So I guess this is "good" but probably too little too late.
-        #  We can hang the process here, but we have no way to know it's flushed.
-        #  So I guess the sound server needs to register with atexit
-        #  What is "normal program termination" anyway
-        import win32api
-        def win_handler():
-            logging.critical('Closing')
-            shutdown_event.set()
-        win32api.SetConsoleCtrlHandler(win_handler, True)
-    else:
-        signal.signal(signal.SIGHUP, handler)
 
     logging.debug('Starting sound server')
     soundserver = SoundServer.SoundServer(shutdown_event)
@@ -821,8 +808,23 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
 
     logging.debug('Booting stats server')
     # uhhhhhhh base the name on the config... somehow? Generate one and write back?
-    disable_stats = not any(conf['stats'] for section in listener_conf.values() for conf in section.values())
-    statserver = StatTracker.StatTracker(Path(config.get('stats_db', 'stats.sqlite')), shutdown_event, disable_stats)
+    enable_stats = any(conf['stats'] for section in listener_conf.values() for conf in section.values())
+    if enable_stats:
+        statserver = StatTracker.StatTracker(Path(config.get('stats_db', 'stats.sqlite')), shutdown_event)
+    else:
+        statserver = StatTracker.StubTracker()
+
+    logging.debug('Attaching MORE signal handlers')
+    if platform.system() == 'Windows':
+        import win32api
+
+        def win_handler(sig):
+            logging.critical('Closing')
+            shutdown_event.set()
+            statserver.wait()
+        win32api.SetConsoleCtrlHandler(win_handler, True)
+    else:
+        signal.signal(signal.SIGHUP, handler)
 
     chat_functions, points_functions = build_listeners(listener_conf, soundserver, statserver)
 
