@@ -87,9 +87,6 @@ The name of the database can be changed by setting `stats_db = 'database.sqlite'
 
 # Known issues
 
-Closing the soundbot window in Windows can lose some stat activity.
-Use `ctrl+c` to exit the program.
-
 If a red screen shows when registering your twitch token, there may be a problem with your connection.
 Close the soundbot and try again.
 
