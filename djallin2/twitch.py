@@ -644,26 +644,29 @@ async def points_ws_listener(config, server_validation, points_functions):
                     msg = json.loads(msg)
                     # We only asked for chat points, so we don't filter by topic
                     # twitch nests the actual message because topics!
-                    if msg.get('type') == 'MESSAGE' and msg['data']['message']['type'] == 'reward-redeemed':
-                        msg = msg['data']['message']
-                        try:
-                            redemption = msg['data']['redemption']
-                            username = redemption['user']['login']
-                            display_name = redemption['user'].get('display_name', username)
-                            timestamp = int(dateutil.parser.parse(msg['data']['timestamp']).timestamp() * 1000)
-                            what = redemption['reward']['title'].strip().lower()
-                            logging.info(f'{display_name} redeemed "{what}"')
-                            if what in points_functions:
-                                points_functions[what](user=username,
-                                                       user_display=display_name,
-                                                       timestamp=timestamp,
-                                                       reward=redemption,
-                                                       message=redemption.get('user_input'))
-                            else:
-                                logging.error('But there is no function for it')
-                        except Exception as err:
-                            logging.error(f'Error in points redemption: {err}')
-                            logging.error(traceback.format_exc())
+                    if msg.get('type') == 'MESSAGE':
+                        # nested json strings!
+                        msg['data']['message'] = json.loads(msg['data']['message'])
+                        if msg['data']['message']['type'] == 'reward-redeemed':
+                            msg = msg['data']['message']
+                            try:
+                                redemption = msg['data']['redemption']
+                                username = redemption['user']['login']
+                                display_name = redemption['user'].get('display_name', username)
+                                timestamp = int(dateutil.parser.parse(msg['data']['timestamp']).timestamp() * 1000)
+                                what = redemption['reward']['title'].strip().lower()
+                                logging.info(f'{display_name} redeemed "{what}"')
+                                if what in points_functions:
+                                    points_functions[what](user=username,
+                                                           user_display=display_name,
+                                                           timestamp=timestamp,
+                                                           reward=redemption,
+                                                           message=redemption.get('user_input'))
+                                else:
+                                    logging.error('But there is no function for it')
+                            except Exception as err:
+                                logging.error(f'Error in points redemption: {err}')
+                                logging.error(traceback.format_exc())
                     elif msg.get('type') == 'PONG':
                         # Cool, got a ping response.
                         logging.info('Got PubSub PONG')
