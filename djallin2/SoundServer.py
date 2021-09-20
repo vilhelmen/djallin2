@@ -17,6 +17,7 @@ class PlaybackException(Exception):
 class SoundRequest:
     priority: int
     timestamp: int
+    sub_index: int
     request: Path = field(compare=False)
     block: bool = field(default=True, compare=False)
 

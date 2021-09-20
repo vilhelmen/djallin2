@@ -263,22 +263,22 @@ def do_message_filter(message):
 # FIXME: do sanitization here?
 def do_sound_req(*, nonblock: bool, entry_name: str, message: str, priority: bool, random_mode: int,
                  sound_server: SoundServer.SoundServer, stat_server: StatTracker.StatTracker,
-                 stats: bool, target: Path, target_file_list: list, target_is_file: bool, timestamp: int,
-                 user: str, **kwargs):
+                 stats: bool, sub_index: int = 0, target: Path, target_file_list: list, target_is_file: bool,
+                 timestamp: int, user: str, **kwargs):
     request = None
     # We could switch to if len(list) == 1 but that would technically clobber a directory with one file
     if target_is_file:
-        request = SoundServer.SoundRequest(50 if priority else 100, timestamp,
+        request = SoundServer.SoundRequest(50 if priority else 100, timestamp, sub_index,
                                            target, not nonblock)
     elif random_mode == 2 or (random_mode == 1 and message == 'random'):
-        request = SoundServer.SoundRequest(50 if priority else 100, timestamp,
+        request = SoundServer.SoundRequest(50 if priority else 100, timestamp, sub_index,
                                            random.choice(target_file_list), not nonblock)
     else:
         fname = message + '.mp3'
         selected_file = target / fname
         if selected_file.exists():
-            request = SoundServer.SoundRequest(50 if priority else 100,
-                                               timestamp, selected_file, not nonblock)
+            request = SoundServer.SoundRequest(50 if priority else 100, timestamp, sub_index,
+                                               selected_file, not nonblock)
         else:
             logging.error(f'{fname} does not exist')
     if request is not None:
@@ -353,9 +353,8 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
                     if not match.groups():
                         do_sound_req(**config, user=user, message='__regex_no_capture', timestamp=timestamp)
                     else:
-                        for san_match in (message_filter.sub('', _) for _ in match.groups() if _):
-                            do_sound_req(**config, user=user, message=san_match, timestamp=timestamp)
-                            timestamp += 0.0001
+                        for sub_idx, san_match in enumerate((message_filter.sub('', _) for _ in match.groups() if _)):
+                            do_sound_req(**config, user=user, message=san_match, timestamp=timestamp, sub_index=sub_idx)
                     # Making a decision here, you matched the regex, you count as fired.
                     return True
             # Switch to regex for repeating captures? Can't seem to get the syntax right though for use with match()
@@ -363,9 +362,8 @@ def chat_listener_factory(config: dict) -> typing.Callable[..., bool]:
                 if (not config['badge_set'] and not config['name_set']) \
                         or badges.keys() & config['badge_set'] \
                         or user in config['name_set']:
-                    for san_match in filter(None, (message_filter.sub('', _) for _ in match)):
-                        do_sound_req(**config, user=user, message=san_match, timestamp=timestamp)
-                        timestamp += 0.0001
+                    for sub_idx, san_match in enumerate(filter(None, (message_filter.sub('', _) for _ in match))):
+                        do_sound_req(**config, user=user, message=san_match, timestamp=timestamp, sub_index=sub_idx)
                     # Making a decision here, you matched the regex, you count as fired.
                     return True
 
@@ -807,7 +805,7 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
 
     if not quiet:
         soundserver.enqueue(SoundServer.SoundRequest(
-            0, 0, Path(pkg_resources.resource_filename(__package__, 'internal/up.mp3')), False))
+            0, 0, 0, Path(pkg_resources.resource_filename(__package__, 'internal/up.mp3')), False))
 
     logging.debug('Booting stats server')
     # uhhhhhhh base the name on the config... somehow? Generate one and write back?
@@ -871,7 +869,7 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
 
     if not quiet:
         soundserver.enqueue(SoundServer.SoundRequest(
-            -1, -1, Path(pkg_resources.resource_filename(__package__, 'internal/down.mp3')), False))
+            -1, -1, -1, Path(pkg_resources.resource_filename(__package__, 'internal/down.mp3')), False))
 
     # So here's the deal. If we raise and we're in windows, the terminal window's probably gonna close immediately
     # so we probably need to wrap this all in a try and if platforms == 'Windows' time.sleep(10) or something
