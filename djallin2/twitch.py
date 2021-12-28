@@ -855,6 +855,9 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
     if not chat_functions and not points_functions:
         logging.critical('Nothing configured??')
         shutdown_event.set()
+        if platform.system() == 'Windows':
+            # Windows will close if we don't raise >:C
+            raise RuntimeError('No chat or point listeners configured!')
 
     # TODO: Figure out shutdowns in the various bad spots
     #  (soundserver needing a fake(?) sound, chat listener, (eventually) points listnener)
