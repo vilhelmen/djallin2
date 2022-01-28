@@ -809,7 +809,7 @@ def launch_system(config_file: Path, quiet: bool = False, debug: bool = False):
 
     logging.debug('Booting stats server')
     # uhhhhhhh base the name on the config... somehow? Generate one and write back?
-    enable_stats = any(conf['stats'] for section in listener_conf.values() for conf in section.values())
+    enable_stats = any('stats' in conf for section in listener_conf.values() for conf in section.values())
     if enable_stats:
         statserver = StatTracker.StatTracker(Path(config.get('stats_db', 'stats.sqlite')), shutdown_event)
     else:
